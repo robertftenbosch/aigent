@@ -51,6 +51,20 @@
 [x] Ctrl+L clear screen
 [x] Ctrl+D exit met session summary
 
+## Project Management [DONE]
+[x] .aigent/ directory structuur
+    - config.json voor project metadata
+    - memory.md voor notities en context
+[x] /project commando's
+    - /project init - Nieuw project aanmaken
+    - /project info - Project info tonen
+    - /project memory - Notities bewerken
+    - /project set <key> <value> - Waarde instellen
+    - /project help - Help tonen
+[x] Automatische project detectie bij opstarten
+[x] Project context in system prompt
+[x] Project naam in status bar
+
 ## Toekomstige Ideeën
 [ ] Session save/restore
 [ ] Export conversatie naar markdown
