@@ -1343,55 +1343,92 @@ def get_full_system_prompt():
     return SYSTEM_PROMPT.format(tool_list_repr=tool_str_repr, project_context=project_ctx)
 
 
+def parse_tool_args(tool_name: str, args_str: str) -> Optional[Dict[str, Any]]:
+    """
+    Parse tool arguments from various formats.
+    Handles JSON objects, single strings, and positional arguments.
+    """
+    args_str = args_str.strip()
+
+    # Try JSON first
+    if args_str.startswith('{'):
+        try:
+            return json.loads(args_str)
+        except json.JSONDecodeError:
+            pass
+
+    # Handle quoted string argument: 'value' or "value"
+    if (args_str.startswith("'") and args_str.endswith("'")) or \
+       (args_str.startswith('"') and args_str.endswith('"')):
+        value = args_str[1:-1]
+        # Map to first parameter of the tool
+        tool = TOOL_REGISTRY.get(tool_name)
+        if tool:
+            sig = inspect.signature(tool)
+            params = list(sig.parameters.keys())
+            if params:
+                return {params[0]: value}
+
+    # Handle unquoted string (simple value)
+    if args_str and not args_str.startswith('{'):
+        tool = TOOL_REGISTRY.get(tool_name)
+        if tool:
+            sig = inspect.signature(tool)
+            params = list(sig.parameters.keys())
+            if params:
+                return {params[0]: args_str}
+
+    return None
+
+
 def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
     """
     Return list of (tool_name, args) requested in various tool call formats.
     Supports:
     - tool: name({...})
+    - tool: name('string')
     - [TOOL_CALLS]name({...})
+    - [TOOL_CALLS]name('string')
     - <tool_call>name({...})</tool_call>
     - name({...}) where name is a known tool
     """
     invocations = []
 
     # Patterns to match different tool call formats
+    # Capture tool name and everything inside parentheses
     patterns = [
-        # tool: name({...})
-        r'tool:\s*(\w+)\s*\((\{.*?\})\)',
-        # [TOOL_CALLS]name({...}) or [TOOL_CALL]name({...})
-        r'\[TOOL_CALLS?\]\s*(\w+)\s*\((\{.*?\})\)',
-        # <tool_call>name({...})</tool_call>
-        r'<tool_call>\s*(\w+)\s*\((\{.*?\})\)\s*</tool_call>',
-        # <<tool_name>>({...})
-        r'<<(\w+)>>\s*\((\{.*?\})\)',
+        # tool: name(...)
+        r'tool:\s*(\w+)\s*\(([^)]+)\)',
+        # [TOOL_CALLS]name(...) or [TOOL_CALL]name(...)
+        r'\[TOOL_CALLS?\]\s*(\w+)\s*\(([^)]+)\)',
+        # <tool_call>name(...)</tool_call>
+        r'<tool_call>\s*(\w+)\s*\(([^)]+)\)\s*</tool_call>',
+        # <<tool_name>>(...)
+        r'<<(\w+)>>\s*\(([^)]+)\)',
     ]
 
     # Try each pattern
     for pattern in patterns:
         matches = re.findall(pattern, text, re.DOTALL)
-        for name, json_str in matches:
+        for name, args_str in matches:
             name = name.strip()
             if name in TOOL_REGISTRY:
-                try:
-                    args = json.loads(json_str)
+                args = parse_tool_args(name, args_str)
+                if args is not None:
                     invocations.append((name, args))
-                except json.JSONDecodeError:
-                    continue
 
-    # Also try line-by-line for simple format: known_tool({...})
+    # Also try line-by-line for simple format: known_tool(...)
     if not invocations:
         for line in text.splitlines():
             line = line.strip()
             for tool_name in TOOL_REGISTRY:
-                # Match tool_name({...}) at start of line or after whitespace
-                pattern = rf'(?:^|[\s\[])({tool_name})\s*\((\{{.*?\}})\)'
+                # Match tool_name(...) at start of line or after whitespace/bracket
+                pattern = rf'(?:^|[\s\[])({tool_name})\s*\(([^)]+)\)'
                 matches = re.findall(pattern, line)
-                for name, json_str in matches:
-                    try:
-                        args = json.loads(json_str)
+                for name, args_str in matches:
+                    args = parse_tool_args(name, args_str)
+                    if args is not None:
                         invocations.append((name, args))
-                    except json.JSONDecodeError:
-                        continue
 
     return invocations
 
