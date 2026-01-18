@@ -18,6 +18,9 @@ AI Coding Assistant powered by Ollama.
 
 ```bash
 # Install as global command
+uv tool install git+https://github.com/robertftenbosch/aigent.git
+
+# Or via SSH
 uv tool install git+ssh://git@github.com/robertftenbosch/aigent.git
 
 # Now use from anywhere
@@ -27,10 +30,16 @@ aigent
 ### As project dependency
 
 ```bash
-# With uv
+# With uv (HTTPS)
+uv add git+https://github.com/robertftenbosch/aigent.git
+
+# With uv (SSH)
 uv add git+ssh://git@github.com/robertftenbosch/aigent.git
 
-# With pip
+# With pip (HTTPS)
+pip install git+https://github.com/robertftenbosch/aigent.git
+
+# With pip (SSH)
 pip install git+ssh://git@github.com/robertftenbosch/aigent.git
 ```
 
