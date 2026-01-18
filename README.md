@@ -149,6 +149,22 @@ End your input with `;;` on a new line for multi-line prompts.
 | `sqlite_tables` | List all tables in a database |
 | `sqlite_schema` | Show schema of database or table |
 
+### Web
+
+| Tool | Description |
+|------|-------------|
+| `web_search` | Search the web using DuckDuckGo |
+| `fetch_url` | Fetch and extract text from a URL |
+
+### Python Packages
+
+| Tool | Description |
+|------|-------------|
+| `pip_list` | List installed packages (optionally outdated only) |
+| `pip_show` | Show info about an installed package |
+| `pip_check` | Check for broken dependencies |
+| `pypi_info` | Get package info from PyPI (online) |
+
 ## Environment Variables
 
 | Variable | Description |

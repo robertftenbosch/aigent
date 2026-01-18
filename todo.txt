@@ -78,7 +78,9 @@
 
 ### Functionaliteit
 [ ] Image support (voor vision models zoals llava)
-[ ] Web search tool
+[x] Web search tool (DuckDuckGo)
+[x] URL fetch tool
+[x] Python package tools (pip_list, pip_show, pip_check, pypi_info)
 [ ] /undo - laatste actie ongedaan maken
 [ ] Diff view voor file changes
 [ ] Model switching mid-session (/model mistral)

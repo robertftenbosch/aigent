@@ -11,6 +11,7 @@ import subprocess
 import sys
 import urllib.request
 import urllib.error
+import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 
@@ -1283,6 +1284,262 @@ def sqlite_schema(database: str, table: str = "") -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+# =============================================================================
+# WEB SEARCH TOOLS
+# =============================================================================
+
+def web_search(query: str, num_results: int = 5) -> Dict[str, Any]:
+    """
+    Search the web using DuckDuckGo and return results.
+    :param query: The search query.
+    :param num_results: Number of results to return (max 10).
+    :return: Dictionary with search results.
+    """
+    import html
+
+    num_results = min(num_results, 10)
+
+    try:
+        # Use DuckDuckGo HTML lite version
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+        )
+
+        with urllib.request.urlopen(req, timeout=10) as response:
+            content = response.read().decode("utf-8")
+
+        # Parse results using regex (simple extraction)
+        results = []
+
+        # Find result blocks
+        result_pattern = r'<a rel="nofollow" class="result__a" href="([^"]+)"[^>]*>(.+?)</a>'
+        snippet_pattern = r'<a class="result__snippet"[^>]*>(.+?)</a>'
+
+        links = re.findall(result_pattern, content)
+        snippets = re.findall(snippet_pattern, content)
+
+        for i, (link, title) in enumerate(links[:num_results]):
+            result = {
+                "title": html.unescape(re.sub(r'<[^>]+>', '', title)).strip(),
+                "url": link,
+            }
+            if i < len(snippets):
+                result["snippet"] = html.unescape(re.sub(r'<[^>]+>', '', snippets[i])).strip()
+            results.append(result)
+
+        return {
+            "query": query,
+            "results": results,
+            "count": len(results)
+        }
+
+    except urllib.error.URLError as e:
+        return {"error": f"Network error: {e}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def fetch_url(url: str, max_length: int = 5000) -> Dict[str, Any]:
+    """
+    Fetch content from a URL and return the text.
+    :param url: The URL to fetch.
+    :param max_length: Maximum content length to return.
+    :return: Dictionary with URL content.
+    """
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+        )
+
+        with urllib.request.urlopen(req, timeout=15) as response:
+            content_type = response.headers.get("Content-Type", "")
+
+            if "text/html" in content_type:
+                html_content = response.read().decode("utf-8", errors="ignore")
+
+                # Simple HTML to text conversion
+                # Remove script and style tags
+                text = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL)
+                text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+                # Remove HTML tags
+                text = re.sub(r'<[^>]+>', ' ', text)
+                # Clean up whitespace
+                text = re.sub(r'\s+', ' ', text).strip()
+                # Decode HTML entities
+                import html
+                text = html.unescape(text)
+
+                return {
+                    "url": url,
+                    "content_type": "html",
+                    "text": text[:max_length],
+                    "truncated": len(text) > max_length
+                }
+            else:
+                content = response.read().decode("utf-8", errors="ignore")
+                return {
+                    "url": url,
+                    "content_type": content_type,
+                    "text": content[:max_length],
+                    "truncated": len(content) > max_length
+                }
+
+    except urllib.error.URLError as e:
+        return {"error": f"Network error: {e}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =============================================================================
+# PYTHON PACKAGE TOOLS
+# =============================================================================
+
+def pip_list(outdated: bool = False) -> Dict[str, Any]:
+    """
+    List installed Python packages.
+    :param outdated: If True, show only outdated packages.
+    :return: Dictionary with package list.
+    """
+    try:
+        cmd = [sys.executable, "-m", "pip", "list", "--format=json"]
+        if outdated:
+            cmd.append("--outdated")
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        if result.returncode != 0:
+            return {"error": result.stderr}
+
+        packages = json.loads(result.stdout)
+
+        return {
+            "packages": packages,
+            "count": len(packages),
+            "outdated_only": outdated
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": "Command timed out"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def pip_show(package: str) -> Dict[str, Any]:
+    """
+    Show information about an installed Python package.
+    :param package: The package name.
+    :return: Dictionary with package information.
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "show", package],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode != 0:
+            return {"error": f"Package not found: {package}"}
+
+        # Parse the output
+        info = {}
+        for line in result.stdout.strip().split("\n"):
+            if ": " in line:
+                key, value = line.split(": ", 1)
+                info[key.lower().replace("-", "_")] = value
+
+        return {
+            "package": package,
+            "info": info
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": "Command timed out"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def pip_check() -> Dict[str, Any]:
+    """
+    Check for broken dependencies in installed packages.
+    :return: Dictionary with dependency check results.
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "check"],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        if result.returncode == 0:
+            return {
+                "status": "ok",
+                "message": "No broken dependencies found"
+            }
+        else:
+            # Parse broken dependencies
+            issues = []
+            for line in result.stdout.strip().split("\n"):
+                if line:
+                    issues.append(line)
+
+            return {
+                "status": "issues_found",
+                "issues": issues,
+                "count": len(issues)
+            }
+    except subprocess.TimeoutExpired:
+        return {"error": "Command timed out"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def pypi_info(package: str) -> Dict[str, Any]:
+    """
+    Get package information from PyPI (online).
+    :param package: The package name.
+    :return: Dictionary with PyPI package information.
+    """
+    try:
+        url = f"https://pypi.org/pypi/{package}/json"
+        req = urllib.request.Request(url)
+
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        info = data.get("info", {})
+
+        return {
+            "package": package,
+            "version": info.get("version"),
+            "summary": info.get("summary"),
+            "author": info.get("author"),
+            "license": info.get("license"),
+            "home_page": info.get("home_page") or info.get("project_url"),
+            "requires_python": info.get("requires_python"),
+            "keywords": info.get("keywords"),
+        }
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {"error": f"Package not found on PyPI: {package}"}
+        return {"error": f"HTTP error: {e}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 TOOL_REGISTRY = {
     # File tools
     "read_file": read_file_tool,
@@ -1312,6 +1569,14 @@ TOOL_REGISTRY = {
     "sqlite_execute": sqlite_execute,
     "sqlite_tables": sqlite_tables,
     "sqlite_schema": sqlite_schema,
+    # Web tools
+    "web_search": web_search,
+    "fetch_url": fetch_url,
+    # Python package tools
+    "pip_list": pip_list,
+    "pip_show": pip_show,
+    "pip_check": pip_check,
+    "pypi_info": pypi_info,
 }
 
 
