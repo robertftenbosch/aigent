@@ -1346,9 +1346,13 @@ def get_full_system_prompt():
 def parse_tool_args(tool_name: str, args_str: str) -> Optional[Dict[str, Any]]:
     """
     Parse tool arguments from various formats.
-    Handles JSON objects, single strings, and positional arguments.
+    Handles JSON objects, single strings, positional arguments, and empty args.
     """
     args_str = args_str.strip()
+
+    # Handle empty arguments - return empty dict for tools with default params
+    if not args_str:
+        return {}
 
     # Try JSON first
     if args_str.startswith('{'):
@@ -1378,7 +1382,7 @@ def parse_tool_args(tool_name: str, args_str: str) -> Optional[Dict[str, Any]]:
             if params:
                 return {params[0]: args_str}
 
-    return None
+    return {}
 
 
 def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
@@ -1395,16 +1399,16 @@ def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
     invocations = []
 
     # Patterns to match different tool call formats
-    # Capture tool name and everything inside parentheses
+    # Capture tool name and everything inside parentheses (including empty)
     patterns = [
         # tool: name(...)
-        r'tool:\s*(\w+)\s*\(([^)]+)\)',
+        r'tool:\s*(\w+)\s*\(([^)]*)\)',
         # [TOOL_CALLS]name(...) or [TOOL_CALL]name(...)
-        r'\[TOOL_CALLS?\]\s*(\w+)\s*\(([^)]+)\)',
+        r'\[TOOL_CALLS?\]\s*(\w+)\s*\(([^)]*)\)',
         # <tool_call>name(...)</tool_call>
-        r'<tool_call>\s*(\w+)\s*\(([^)]+)\)\s*</tool_call>',
+        r'<tool_call>\s*(\w+)\s*\(([^)]*)\)\s*</tool_call>',
         # <<tool_name>>(...)
-        r'<<(\w+)>>\s*\(([^)]+)\)',
+        r'<<(\w+)>>\s*\(([^)]*)\)',
     ]
 
     # Try each pattern
@@ -1423,7 +1427,7 @@ def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
             line = line.strip()
             for tool_name in TOOL_REGISTRY:
                 # Match tool_name(...) at start of line or after whitespace/bracket
-                pattern = rf'(?:^|[\s\[])({tool_name})\s*\(([^)]+)\)'
+                pattern = rf'(?:^|[\s\[])({tool_name})\s*\(([^)]*)\)'
                 matches = re.findall(pattern, line)
                 for name, args_str in matches:
                     args = parse_tool_args(name, args_str)
