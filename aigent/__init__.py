@@ -1345,24 +1345,54 @@ def get_full_system_prompt():
 
 def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
     """
-    Return list of (tool_name, args) requested in 'tool: name({...})' lines.
+    Return list of (tool_name, args) requested in various tool call formats.
+    Supports:
+    - tool: name({...})
+    - [TOOL_CALLS]name({...})
+    - <tool_call>name({...})</tool_call>
+    - name({...}) where name is a known tool
     """
     invocations = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line.startswith("tool:"):
-            continue
-        try:
-            after = line[len("tool:"):].strip()
-            name, rest = after.split("(", 1)
+
+    # Patterns to match different tool call formats
+    patterns = [
+        # tool: name({...})
+        r'tool:\s*(\w+)\s*\((\{.*?\})\)',
+        # [TOOL_CALLS]name({...}) or [TOOL_CALL]name({...})
+        r'\[TOOL_CALLS?\]\s*(\w+)\s*\((\{.*?\})\)',
+        # <tool_call>name({...})</tool_call>
+        r'<tool_call>\s*(\w+)\s*\((\{.*?\})\)\s*</tool_call>',
+        # <<tool_name>>({...})
+        r'<<(\w+)>>\s*\((\{.*?\})\)',
+    ]
+
+    # Try each pattern
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.DOTALL)
+        for name, json_str in matches:
             name = name.strip()
-            if not rest.endswith(")"):
-                continue
-            json_str = rest[:-1].strip()
-            args = json.loads(json_str)
-            invocations.append((name, args))
-        except Exception:
-            continue
+            if name in TOOL_REGISTRY:
+                try:
+                    args = json.loads(json_str)
+                    invocations.append((name, args))
+                except json.JSONDecodeError:
+                    continue
+
+    # Also try line-by-line for simple format: known_tool({...})
+    if not invocations:
+        for line in text.splitlines():
+            line = line.strip()
+            for tool_name in TOOL_REGISTRY:
+                # Match tool_name({...}) at start of line or after whitespace
+                pattern = rf'(?:^|[\s\[])({tool_name})\s*\((\{{.*?\}})\)'
+                matches = re.findall(pattern, line)
+                for name, json_str in matches:
+                    try:
+                        args = json.loads(json_str)
+                        invocations.append((name, args))
+                    except json.JSONDecodeError:
+                        continue
+
     return invocations
 
 
