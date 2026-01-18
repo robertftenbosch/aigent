@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import time
 import threading
+import signal
 
 load_dotenv()
 
@@ -800,12 +801,8 @@ def display_welcome():
     console.print()
     console.print(Panel(
         "[bold cyan]aigent[/bold cyan] - AI Coding Assistant\n\n"
-        "[dim]Commands:[/dim]\n"
-        "  [cyan]/help[/cyan]    - Show help\n"
-        "  [cyan]/clear[/cyan]   - Clear conversation\n"
-        "  [cyan]/model[/cyan]   - Show current model\n"
-        "  [cyan]/exit[/cyan]    - Exit the agent\n\n"
-        "[dim]Multi-line input:[/dim] End with [cyan];;[/cyan] on a new line",
+        "[dim]Commands:[/dim]  [cyan]/help[/cyan] [cyan]/clear[/cyan] [cyan]/models[/cyan] [cyan]/tools[/cyan] [cyan]/exit[/cyan]\n\n"
+        "[dim]Shortcuts:[/dim]  [cyan]Tab[/cyan] complete  [cyan]↑↓[/cyan] history  [cyan]Ctrl+C[/cyan] cancel  [cyan]Ctrl+D[/cyan] exit  [cyan]Ctrl+L[/cyan] clear",
         title="[bold]Welcome[/bold]",
         border_style="blue"
     ))
@@ -814,17 +811,29 @@ def display_welcome():
 
 def display_help():
     """Display help information."""
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("Command", style="cyan")
-    table.add_column("Description")
-    table.add_row("/help", "Show this help message")
-    table.add_row("/clear", "Clear conversation history")
-    table.add_row("/model", "Show current model")
-    table.add_row("/models", "List available Ollama models with capabilities")
-    table.add_row("/tools", "List available tools")
-    table.add_row("/exit, /quit", "Exit the agent")
-    table.add_row(";;", "End multi-line input (on new line)")
-    console.print(Panel(table, title="[bold]Help[/bold]", border_style="blue"))
+    # Commands table
+    cmd_table = Table(show_header=True, header_style="bold cyan", title="Commands")
+    cmd_table.add_column("Command", style="cyan")
+    cmd_table.add_column("Description")
+    cmd_table.add_row("/help", "Show this help message")
+    cmd_table.add_row("/clear", "Clear conversation history")
+    cmd_table.add_row("/model", "Show current model")
+    cmd_table.add_row("/models", "List available Ollama models")
+    cmd_table.add_row("/tools", "List available tools")
+    cmd_table.add_row("/exit", "Exit the agent")
+
+    # Shortcuts table
+    shortcut_table = Table(show_header=True, header_style="bold cyan", title="Keyboard Shortcuts")
+    shortcut_table.add_column("Shortcut", style="cyan")
+    shortcut_table.add_column("Action")
+    shortcut_table.add_row("Tab", "Autocomplete commands/paths")
+    shortcut_table.add_row("↑ / ↓", "Navigate command history")
+    shortcut_table.add_row("Ctrl+C", "Cancel current input/generation")
+    shortcut_table.add_row("Ctrl+D", "Exit aigent")
+    shortcut_table.add_row("Ctrl+L", "Clear screen")
+    shortcut_table.add_row(";;", "End multi-line input")
+
+    console.print(Panel(Group(cmd_table, Text(), shortcut_table), title="[bold]Help[/bold]", border_style="blue"))
 
 
 def display_tools():
@@ -1053,6 +1062,63 @@ class AigentCompleter:
 completer = AigentCompleter()
 
 
+# =============================================================================
+# KEYBOARD SHORTCUTS & SIGNAL HANDLING
+# =============================================================================
+
+class InterruptHandler:
+    """Handle keyboard interrupts gracefully."""
+
+    def __init__(self):
+        self.interrupted = False
+        self.original_handler = None
+
+    def __enter__(self):
+        self.interrupted = False
+        self.original_handler = signal.signal(signal.SIGINT, self._handler)
+        return self
+
+    def __exit__(self, *args):
+        signal.signal(signal.SIGINT, self.original_handler)
+
+    def _handler(self, signum, frame):
+        self.interrupted = True
+        console.print("\n[yellow]⚡ Interrupted - finishing current operation...[/yellow]")
+
+
+# Global interrupt handler
+interrupt_handler = InterruptHandler()
+
+
+def clear_screen():
+    """Clear the terminal screen."""
+    console.clear()
+    display_welcome()
+    display_status_bar()
+
+
+def handle_ctrl_l():
+    """Handle Ctrl+L to clear screen."""
+    # This is called via readline binding
+    clear_screen()
+    return ""
+
+
+def setup_keyboard_shortcuts():
+    """Setup additional keyboard shortcuts via readline."""
+    try:
+        # Ctrl+L to clear screen
+        # We need to use a custom approach since readline doesn't directly support this
+        if "libedit" in readline.__doc__:
+            # macOS
+            readline.parse_and_bind("bind ^L ed-clear-screen")
+        else:
+            # Linux - GNU readline
+            readline.parse_and_bind('"\\C-l": clear-screen')
+    except Exception:
+        pass
+
+
 def setup_readline():
     """Setup readline for command history and tab completion."""
     try:
@@ -1069,9 +1135,14 @@ def setup_readline():
         if "libedit" in readline.__doc__:
             # macOS uses libedit
             readline.parse_and_bind("bind ^I rl_complete")
+            readline.parse_and_bind("bind ^L ed-clear-screen")
         else:
             # Linux uses GNU readline
             readline.parse_and_bind("tab: complete")
+            readline.parse_and_bind('"\\C-l": clear-screen')
+
+        # Setup keyboard shortcuts
+        setup_keyboard_shortcuts()
 
     except Exception:
         pass
@@ -1115,7 +1186,15 @@ def get_multiline_input() -> Optional[str]:
             except EOFError:
                 break
 
-    except (KeyboardInterrupt, EOFError):
+    except EOFError:
+        # Ctrl+D pressed - signal exit
+        console.print()
+        console.print("[dim]Ctrl+D pressed. Goodbye![/dim]")
+        return "EXIT_SIGNAL"
+    except KeyboardInterrupt:
+        # Ctrl+C pressed - cancel current input
+        console.print()
+        console.print("[dim]Input cancelled.[/dim]")
         return None
 
     return "\n".join(lines).strip()
@@ -1186,6 +1265,7 @@ def execute_llm_call_streaming(client: OpenAI, model: str, conversation: List[Di
     global session
     full_response = ""
     display = StreamingDisplay(console)
+    interrupted = False
 
     try:
         with Live(console=console, refresh_per_second=12, transient=True) as live:
@@ -1198,24 +1278,35 @@ def execute_llm_call_streaming(client: OpenAI, model: str, conversation: List[Di
                 stream=True
             )
 
-            first_chunk = True
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
-                    full_response += content
+            try:
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        full_response += content
 
-                    # Show streaming text with animated cursor
-                    live.update(display.render_with_header(full_response))
+                        # Show streaming text with animated cursor
+                        live.update(display.render_with_header(full_response))
+            except KeyboardInterrupt:
+                interrupted = True
+                live.update(Text("⚡ Interrupted", style="bold yellow"))
+                time.sleep(0.3)
 
-            # Show completion state briefly
-            live.update(display.render_with_header(full_response, is_complete=True))
-            time.sleep(0.3)
+            if not interrupted:
+                # Show completion state briefly
+                live.update(display.render_with_header(full_response, is_complete=True))
+                time.sleep(0.3)
 
         # Track tokens and update connection status
         session.connected = True
         input_tokens = sum(estimate_tokens(m.get("content", "")) for m in conversation)
         output_tokens = estimate_tokens(full_response)
         session.add_tokens(input_tokens + output_tokens)
+
+        if interrupted:
+            # Return partial response with interruption note
+            if full_response:
+                full_response += "\n\n[Generation interrupted by user]"
+            return full_response if full_response else None
 
         # Success sound
         play_sound("complete")
@@ -1358,6 +1449,10 @@ def run_coding_agent_loop(
         while True:
             user_input = get_multiline_input()
 
+            # Handle exit signal (Ctrl+D)
+            if user_input == "EXIT_SIGNAL":
+                break
+
             if not user_input:
                 continue
 
@@ -1368,6 +1463,7 @@ def run_coding_agent_loop(
                     break
                 elif result == "clear":
                     conversation = [{"role": "system", "content": get_full_system_prompt()}]
+                    display_status_bar()
                     continue
                 elif result == "continue":
                     continue
@@ -1380,6 +1476,7 @@ def run_coding_agent_loop(
         console.print("\n[dim]Interrupted. Goodbye![/dim]")
     finally:
         save_readline()
+        console.print("[dim]Session ended. Tokens used: [cyan]{:,}[/cyan][/dim]".format(session.total_tokens))
 
 
 def process_agent_turn(

@@ -42,11 +42,14 @@
 [ ] Kleurthema's (dark/light/custom)
 [ ] Configuratie bestand voor themes
 
-## Keyboard Shortcuts [ ]
+## Keyboard Shortcuts [DONE]
 [x] ↑/↓ history navigatie (al werkend via readline)
-[ ] Ctrl+C graceful cancel met cleanup
-[ ] Ctrl+L clear screen
-[ ] Ctrl+D exit
+[x] Ctrl+C graceful cancel
+    - Cancel input
+    - Interrupt streaming generation
+    - Shows partial response if interrupted
+[x] Ctrl+L clear screen
+[x] Ctrl+D exit met session summary
 
 ## Toekomstige Ideeën
 [ ] Session save/restore
