@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 
-from openai import OpenAI
+from openai import OpenAI, APIConnectionError, APIStatusError
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.markdown import Markdown
@@ -726,38 +726,80 @@ def create_client(base_url: str) -> OpenAI:
     )
 
 
-def execute_llm_call_streaming(client: OpenAI, model: str, conversation: List[Dict[str, str]]) -> str:
+def display_connection_error(base_url: str, model: str, error: Exception):
+    """Display a helpful error message for connection failures."""
+    console.print()
+    console.print(Panel(
+        f"[bold red]Connection Failed[/bold red]\n\n"
+        f"Could not connect to Ollama at [cyan]{base_url}[/cyan]\n\n"
+        f"[bold]Possible causes:[/bold]\n"
+        f"  1. Ollama is not running\n"
+        f"  2. Wrong URL (check --url option)\n"
+        f"  3. Model '[cyan]{model}[/cyan]' is not installed\n\n"
+        f"[bold]Solutions:[/bold]\n"
+        f"  • Start Ollama: [cyan]ollama serve[/cyan]\n"
+        f"  • Pull model:   [cyan]ollama pull {model}[/cyan]\n"
+        f"  • Check URL:    [cyan]aigent --url http://localhost:11434/v1[/cyan]\n\n"
+        f"[dim]Error: {error}[/dim]",
+        title="[bold red]Error[/bold red]",
+        border_style="red",
+        padding=(1, 2)
+    ))
+    console.print()
+
+
+def execute_llm_call_streaming(client: OpenAI, model: str, conversation: List[Dict[str, str]], base_url: str) -> Optional[str]:
     """Execute LLM call with streaming output."""
     full_response = ""
 
-    with Live(console=console, refresh_per_second=10, transient=True) as live:
-        stream = client.chat.completions.create(
-            model=model,
-            messages=conversation,
-            stream=True
-        )
-
-        for chunk in stream:
-            if chunk.choices[0].delta.content:
-                content = chunk.choices[0].delta.content
-                full_response += content
-                # Show streaming text
-                live.update(Text(full_response, style="yellow"))
-
-    return full_response
-
-
-def execute_llm_call(client: OpenAI, model: str, conversation: List[Dict[str, str]], stream: bool = True) -> str:
-    """Execute LLM call."""
-    if stream:
-        return execute_llm_call_streaming(client, model, conversation)
-    else:
-        with console.status("[bold cyan]Thinking...[/bold cyan]", spinner="dots"):
-            response = client.chat.completions.create(
+    try:
+        with Live(console=console, refresh_per_second=10, transient=True) as live:
+            stream = client.chat.completions.create(
                 model=model,
                 messages=conversation,
+                stream=True
             )
-        return response.choices[0].message.content
+
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    full_response += content
+                    # Show streaming text
+                    live.update(Text(full_response, style="yellow"))
+
+        return full_response
+    except APIConnectionError as e:
+        display_connection_error(base_url, model, e)
+        return None
+    except APIStatusError as e:
+        display_connection_error(base_url, model, e)
+        return None
+    except Exception as e:
+        display_connection_error(base_url, model, e)
+        return None
+
+
+def execute_llm_call(client: OpenAI, model: str, conversation: List[Dict[str, str]], base_url: str, stream: bool = True) -> Optional[str]:
+    """Execute LLM call."""
+    try:
+        if stream:
+            return execute_llm_call_streaming(client, model, conversation, base_url)
+        else:
+            with console.status("[bold cyan]Thinking...[/bold cyan]", spinner="dots"):
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=conversation,
+                )
+            return response.choices[0].message.content
+    except APIConnectionError as e:
+        display_connection_error(base_url, model, e)
+        return None
+    except APIStatusError as e:
+        display_connection_error(base_url, model, e)
+        return None
+    except Exception as e:
+        display_connection_error(base_url, model, e)
+        return None
 
 
 def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -807,7 +849,7 @@ def run_coding_agent_loop(
     # Single command mode
     if single_command:
         conversation.append({"role": "user", "content": single_command})
-        process_agent_turn(client, model, conversation, stream, verbose)
+        process_agent_turn(client, model, base_url, conversation, stream, verbose)
         return
 
     # Interactive mode
@@ -832,7 +874,7 @@ def run_coding_agent_loop(
                     continue
 
             conversation.append({"role": "user", "content": user_input})
-            process_agent_turn(client, model, conversation, stream, verbose)
+            process_agent_turn(client, model, base_url, conversation, stream, verbose)
 
     except KeyboardInterrupt:
         console.print("\n[dim]Interrupted. Goodbye![/dim]")
@@ -843,6 +885,7 @@ def run_coding_agent_loop(
 def process_agent_turn(
     client: OpenAI,
     model: str,
+    base_url: str,
     conversation: List[Dict[str, str]],
     stream: bool,
     verbose: bool
@@ -850,7 +893,12 @@ def process_agent_turn(
     """Process a single agent turn (may involve multiple tool calls)."""
 
     while True:
-        assistant_response = execute_llm_call(client, model, conversation, stream)
+        assistant_response = execute_llm_call(client, model, conversation, base_url, stream)
+
+        # Handle connection errors
+        if assistant_response is None:
+            return
+
         tool_invocations = extract_tool_invocations(assistant_response)
 
         if not tool_invocations:
