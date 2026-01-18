@@ -859,12 +859,111 @@ def display_models(base_url: str, current_model: str):
 # INPUT HANDLING
 # =============================================================================
 
+# Available slash commands for completion
+SLASH_COMMANDS = ["/help", "/clear", "/model", "/models", "/tools", "/exit", "/quit"]
+
+
+class AigentCompleter:
+    """Tab completion for aigent CLI."""
+
+    def __init__(self):
+        self.matches: List[str] = []
+
+    def complete(self, text: str, state: int) -> Optional[str]:
+        """Readline completion function."""
+        if state == 0:
+            # Get the full line buffer
+            line = readline.get_line_buffer()
+            self.matches = self._get_matches(line, text)
+
+        if state < len(self.matches):
+            return self.matches[state]
+        return None
+
+    def _get_matches(self, line: str, text: str) -> List[str]:
+        """Get completion matches based on current input."""
+        # Slash command completion
+        if line.startswith("/"):
+            return [cmd for cmd in SLASH_COMMANDS if cmd.startswith(text)]
+
+        # File path completion (if text looks like a path)
+        if text.startswith(("./", "../", "/", "~")) or "/" in text:
+            return self._complete_path(text)
+
+        # Also complete paths if it might be a file reference
+        if text and not text.startswith("/"):
+            path_matches = self._complete_path(text)
+            if path_matches:
+                return path_matches
+
+        return []
+
+    def _complete_path(self, text: str) -> List[str]:
+        """Complete file paths."""
+        try:
+            # Expand ~ to home directory
+            if text.startswith("~"):
+                expanded = os.path.expanduser(text)
+                prefix = "~"
+                search_text = expanded
+            else:
+                prefix = ""
+                search_text = text
+
+            # Get directory and partial filename
+            if os.path.isdir(search_text):
+                directory = search_text
+                partial = ""
+            else:
+                directory = os.path.dirname(search_text) or "."
+                partial = os.path.basename(search_text)
+
+            # List matching files
+            matches = []
+            if os.path.isdir(directory):
+                for name in os.listdir(directory):
+                    if name.startswith(partial):
+                        full_path = os.path.join(directory, name)
+                        # Add trailing slash for directories
+                        if os.path.isdir(full_path):
+                            name += "/"
+                        # Reconstruct with original prefix
+                        if prefix == "~":
+                            home = os.path.expanduser("~")
+                            result = "~" + full_path[len(home):]
+                        else:
+                            result = full_path
+                        matches.append(result)
+
+            return sorted(matches)
+        except Exception:
+            return []
+
+
+# Global completer instance
+completer = AigentCompleter()
+
+
 def setup_readline():
-    """Setup readline for command history."""
+    """Setup readline for command history and tab completion."""
     try:
+        # Load history
         if HISTORY_FILE.exists():
             readline.read_history_file(HISTORY_FILE)
         readline.set_history_length(1000)
+
+        # Setup tab completion
+        readline.set_completer(completer.complete)
+        readline.set_completer_delims(" \t\n;")
+
+        # Use tab for completion (handle different platforms)
+        if "libedit" in readline.__doc__:
+            # macOS uses libedit
+            readline.parse_and_bind("bind ^I rl_complete")
+        else:
+            # Linux uses GNU readline
+            readline.parse_and_bind("tab: complete")
+
     except Exception:
         pass
 
@@ -881,7 +980,10 @@ def get_multiline_input() -> Optional[str]:
     """Get input that can span multiple lines. End with ;; on a new line."""
     lines = []
     try:
-        first_line = console.input("[bold blue]You:[/bold blue] ")
+        # Use standard input() for readline/tab-completion support
+        # Print prompt with rich, then use input()
+        console.print("[bold blue]You:[/bold blue] ", end="")
+        first_line = input()
         if not first_line:
             return None
         lines.append(first_line)
@@ -896,7 +998,8 @@ def get_multiline_input() -> Optional[str]:
                 # Single line input is fine
                 break
             try:
-                continuation = console.input("[dim]...[/dim] ")
+                console.print("[dim]...[/dim] ", end="")
+                continuation = input()
                 if continuation.strip() == ";;":
                     break
                 lines.append(continuation)
