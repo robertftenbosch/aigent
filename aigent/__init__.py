@@ -548,13 +548,26 @@ def estimate_tokens(text: str) -> int:
 
 # Typing cursor frames for streaming animation
 CURSOR_FRAMES = ["▍", "▌", "▋", "▊", "▉", "█", "▉", "▊", "▋", "▌", "▍", " "]
+
+# Thinking spinner frames (braille pattern animation)
+THINKING_SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+# Alternative spinners
+DOTS_SPINNER = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
+BRAIN_SPINNER = ["🧠", "💭", "💡", "✨"]
+
 THINKING_MESSAGES = [
     "Thinking",
     "Analyzing",
     "Processing",
     "Considering",
     "Reasoning",
+    "Pondering",
+    "Evaluating",
+    "Computing",
 ]
+
+THINKING_DOTS = ["", ".", "..", "..."]
 
 
 def play_sound(sound_type: str = "success"):
@@ -573,6 +586,50 @@ def play_sound(sound_type: str = "success"):
     elif sound_type == "complete":
         # Gentle notification
         print("\a", end="", flush=True)
+
+
+class ThinkingDisplay:
+    """Animated display for thinking/waiting state."""
+
+    def __init__(self):
+        self.frame_index = 0
+        self.message_index = 0
+        self.dots_index = 0
+        self.start_time = time.time()
+        self.last_message_change = time.time()
+
+    def get_elapsed(self) -> str:
+        """Get elapsed time string."""
+        elapsed = time.time() - self.start_time
+        return f"{elapsed:.1f}s"
+
+    def render(self) -> Text:
+        """Render the thinking animation."""
+        result = Text()
+
+        # Get spinner frame
+        spinner = THINKING_SPINNER[self.frame_index % len(THINKING_SPINNER)]
+        self.frame_index += 1
+
+        # Change message every 2 seconds
+        if time.time() - self.last_message_change > 2.0:
+            self.message_index = (self.message_index + 1) % len(THINKING_MESSAGES)
+            self.last_message_change = time.time()
+
+        # Animate dots
+        dots = THINKING_DOTS[self.dots_index % len(THINKING_DOTS)]
+        self.dots_index += 1
+
+        message = THINKING_MESSAGES[self.message_index]
+
+        # Build the display
+        result.append(f" {spinner} ", style="bold cyan")
+        result.append(message, style="bold yellow")
+        result.append(dots, style="yellow")
+        result.append(f"  ", style="")
+        result.append(f"({self.get_elapsed()})", style="dim cyan")
+
+        return result
 
 
 class StreamingDisplay:
@@ -1997,13 +2054,15 @@ def execute_llm_call_streaming(client: OpenAI, model: str, conversation: List[Di
     """Execute LLM call with streaming output."""
     global session
     full_response = ""
-    display = StreamingDisplay(console)
+    streaming_display = StreamingDisplay(console)
+    thinking_display = ThinkingDisplay()
     interrupted = False
+    first_token_received = False
 
     try:
-        with Live(console=console, refresh_per_second=12, transient=True) as live:
-            # Show initial thinking state
-            live.update(Text("● Thinking...", style="bold cyan"))
+        with Live(console=console, refresh_per_second=10, transient=True) as live:
+            # Show initial thinking animation
+            live.update(thinking_display.render())
 
             stream = client.chat.completions.create(
                 model=model,
@@ -2011,22 +2070,46 @@ def execute_llm_call_streaming(client: OpenAI, model: str, conversation: List[Di
                 stream=True
             )
 
+            # Start a thread to animate thinking while waiting for first token
+            thinking_active = True
+
+            def animate_thinking():
+                while thinking_active and not first_token_received:
+                    try:
+                        live.update(thinking_display.render())
+                        time.sleep(0.1)
+                    except Exception:
+                        break
+
+            thinking_thread = threading.Thread(target=animate_thinking, daemon=True)
+            thinking_thread.start()
+
             try:
                 for chunk in stream:
                     if chunk.choices[0].delta.content:
                         content = chunk.choices[0].delta.content
+
+                        # First token received - switch to streaming display
+                        if not first_token_received:
+                            first_token_received = True
+                            thinking_active = False
+                            streaming_display.start_time = time.time()
+
                         full_response += content
 
                         # Show streaming text with animated cursor
-                        live.update(display.render_with_header(full_response))
+                        live.update(streaming_display.render_with_header(full_response))
             except KeyboardInterrupt:
                 interrupted = True
+                thinking_active = False
                 live.update(Text("⚡ Interrupted", style="bold yellow"))
                 time.sleep(0.3)
 
+            thinking_active = False
+
             if not interrupted:
                 # Show completion state briefly
-                live.update(display.render_with_header(full_response, is_complete=True))
+                live.update(streaming_display.render_with_header(full_response, is_complete=True))
                 time.sleep(0.3)
 
         # Track tokens and update connection status
