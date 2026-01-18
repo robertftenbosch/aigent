@@ -2628,20 +2628,33 @@ def preview_file_edit(path: str, old_str: str, new_str: str) -> Tuple[bool, str]
     Generate a preview diff for a file edit.
     Returns (success, diff_text or error_message).
     """
+    # Validate inputs
+    if not path:
+        return False, "No file path specified"
+
     full_path = resolve_abs_path(path)
+
+    # Check if path is a directory
+    if full_path.is_dir():
+        return False, f"Path is a directory, not a file: {full_path}"
 
     # New file creation
     if old_str == "":
+        if not new_str:
+            return False, "No content provided for new file"
+
+        # Create a diff-like format for new file
         preview_lines = [
-            f"[bold green]+ Creating new file: {full_path}[/bold green]",
-            "",
+            f"--- /dev/null",
+            f"+++ b/{full_path.name}",
+            f"@@ -0,0 +1,{min(len(new_str.splitlines()), 20)} @@",
         ]
         # Show first 20 lines of new content
         new_lines = new_str.split('\n')[:20]
         for line in new_lines:
-            preview_lines.append(f"[green]+ {line}[/green]")
+            preview_lines.append(f"+{line}")
         if len(new_str.split('\n')) > 20:
-            preview_lines.append(f"[dim]... ({len(new_str.split(chr(10))) - 20} more lines)[/dim]")
+            preview_lines.append(f"+... ({len(new_str.splitlines()) - 20} more lines)")
         return True, '\n'.join(preview_lines)
 
     # Check if file exists
@@ -2757,6 +2770,13 @@ def execute_tool(name: str, args: Dict[str, Any], skip_confirm: bool = False) ->
         path = args.get("path", "")
         old_str = args.get("old_str", "")
         new_str = args.get("new_str", "")
+
+        # Validate required arguments
+        if not path:
+            return {"error": "Missing required argument: path"}
+        if old_str == "" and new_str == "":
+            return {"error": "Missing required arguments: old_str and new_str"}
+
         if not display_edit_preview(path, old_str, new_str):
             return {"error": "Edit cancelled by user", "cancelled": True}
 
