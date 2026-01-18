@@ -2058,56 +2058,63 @@ def execute_llm_call_streaming(client: OpenAI, model: str, conversation: List[Di
     thinking_display = ThinkingDisplay()
     interrupted = False
     first_token_received = False
+    stream = None
+    stream_error = None
 
-    try:
-        with Live(console=console, refresh_per_second=10, transient=True) as live:
-            # Show initial thinking animation
-            live.update(thinking_display.render())
-
+    # Use a thread to make the API call while showing thinking animation
+    def make_api_call():
+        nonlocal stream, stream_error
+        try:
             stream = client.chat.completions.create(
                 model=model,
                 messages=conversation,
                 stream=True
             )
+        except Exception as e:
+            stream_error = e
 
-            # Start a thread to animate thinking while waiting for first token
-            thinking_active = True
+    # Start API call in background thread
+    api_thread = threading.Thread(target=make_api_call, daemon=True)
+    api_thread.start()
 
-            def animate_thinking():
-                while thinking_active and not first_token_received:
-                    try:
-                        live.update(thinking_display.render())
-                        time.sleep(0.1)
-                    except Exception:
-                        break
+    try:
+        # Show thinking animation while waiting for API connection
+        with Live(console=console, refresh_per_second=10, transient=True) as live:
+            # Animate while API call is being made
+            while api_thread.is_alive():
+                live.update(thinking_display.render())
+                time.sleep(0.08)
 
-            thinking_thread = threading.Thread(target=animate_thinking, daemon=True)
-            thinking_thread.start()
+            # Check for errors
+            if stream_error:
+                raise stream_error
 
+            # Continue thinking animation while waiting for first token
             try:
                 for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        content = chunk.choices[0].delta.content
+                    # Keep animating until we get content
+                    if not chunk.choices[0].delta.content:
+                        live.update(thinking_display.render())
+                        continue
 
-                        # First token received - switch to streaming display
-                        if not first_token_received:
-                            first_token_received = True
-                            thinking_active = False
-                            streaming_display.start_time = time.time()
+                    content = chunk.choices[0].delta.content
 
-                        full_response += content
+                    # First token received - switch to streaming display
+                    if not first_token_received:
+                        first_token_received = True
+                        streaming_display.start_time = time.time()
 
-                        # Show streaming text with animated cursor
-                        live.update(streaming_display.render_with_header(full_response))
+                    full_response += content
+
+                    # Show streaming text with animated cursor
+                    live.update(streaming_display.render_with_header(full_response))
+
             except KeyboardInterrupt:
                 interrupted = True
-                thinking_active = False
                 live.update(Text("⚡ Interrupted", style="bold yellow"))
                 time.sleep(0.3)
 
-            thinking_active = False
-
-            if not interrupted:
+            if not interrupted and full_response:
                 # Show completion state briefly
                 live.update(streaming_display.render_with_header(full_response, is_complete=True))
                 time.sleep(0.3)
