@@ -28,9 +28,17 @@
 [ ] Token/cost tracking weergave per request
 [ ] "Copy" indicator bij code blocks
 
-## Animaties & Feedback [ ]
-[ ] Betere typing indicator tijdens streaming
-[ ] Succes/error geluid (optioneel, configureerbaar)
+## Animaties & Feedback [PARTIAL]
+[x] Betere typing indicator tijdens streaming
+    - Animated cursor (▍▌▋▊▉█)
+    - Elapsed time display
+    - "Thinking..." state
+    - Completion state
+[x] Succes/error geluid (optioneel, configureerbaar)
+    - AIGENT_SOUNDS=0 om uit te schakelen
+    - Success beep bij voltooiing
+    - Double beep bij errors
+[x] Tool execution spinner met timing
 [ ] Kleurthema's (dark/light/custom)
 [ ] Configuratie bestand voor themes
 

@@ -24,8 +24,11 @@ from rich.spinner import Spinner
 from rich.text import Text
 from rich.rule import Rule
 from rich.columns import Columns
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from dataclasses import dataclass, field
 from datetime import datetime
+import time
+import threading
 
 load_dotenv()
 
@@ -120,6 +123,112 @@ def display_status_bar():
 def estimate_tokens(text: str) -> int:
     """Rough estimation of tokens (approx 4 chars per token)."""
     return len(text) // 4
+
+
+# =============================================================================
+# ANIMATIONS & FEEDBACK
+# =============================================================================
+
+# Typing cursor frames for streaming animation
+CURSOR_FRAMES = ["▍", "▌", "▋", "▊", "▉", "█", "▉", "▊", "▋", "▌", "▍", " "]
+THINKING_MESSAGES = [
+    "Thinking",
+    "Analyzing",
+    "Processing",
+    "Considering",
+    "Reasoning",
+]
+
+
+def play_sound(sound_type: str = "success"):
+    """Play a terminal bell sound. Can be disabled via environment variable."""
+    if os.environ.get("AIGENT_SOUNDS", "1") == "0":
+        return
+
+    if sound_type == "success":
+        # Single short beep
+        print("\a", end="", flush=True)
+    elif sound_type == "error":
+        # Double beep for errors
+        print("\a", end="", flush=True)
+        time.sleep(0.1)
+        print("\a", end="", flush=True)
+    elif sound_type == "complete":
+        # Gentle notification
+        print("\a", end="", flush=True)
+
+
+class StreamingDisplay:
+    """Animated display for streaming LLM responses."""
+
+    def __init__(self, console: Console):
+        self.console = console
+        self.frame_index = 0
+        self.start_time = time.time()
+
+    def get_cursor(self) -> str:
+        """Get the current cursor frame."""
+        cursor = CURSOR_FRAMES[self.frame_index % len(CURSOR_FRAMES)]
+        self.frame_index += 1
+        return cursor
+
+    def get_elapsed(self) -> str:
+        """Get elapsed time string."""
+        elapsed = time.time() - self.start_time
+        return f"{elapsed:.1f}s"
+
+    def render(self, text: str, is_complete: bool = False) -> Text:
+        """Render the streaming text with cursor animation."""
+        result = Text()
+
+        if is_complete:
+            result.append(text, style="yellow")
+        else:
+            result.append(text, style="yellow")
+            result.append(self.get_cursor(), style="bold cyan")
+
+        return result
+
+    def render_with_header(self, text: str, is_complete: bool = False) -> Group:
+        """Render text with a header showing elapsed time."""
+        header = Text()
+        if not is_complete:
+            header.append("● ", style="bold green")
+            header.append("Generating ", style="dim")
+            header.append(f"({self.get_elapsed()})", style="dim cyan")
+        else:
+            header.append("✓ ", style="bold green")
+            header.append("Complete ", style="dim")
+            header.append(f"({self.get_elapsed()})", style="dim cyan")
+
+        content = self.render(text, is_complete)
+
+        return Group(header, Text(), content)
+
+
+class ToolExecutionDisplay:
+    """Animated display for tool execution."""
+
+    def __init__(self, console: Console, tool_name: str):
+        self.console = console
+        self.tool_name = tool_name
+        self.start_time = time.time()
+
+    def __enter__(self):
+        self.status = self.console.status(
+            f"[bold cyan]Executing {self.tool_name}...[/bold cyan]",
+            spinner="dots"
+        )
+        self.status.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        self.status.__exit__(*args)
+        elapsed = time.time() - self.start_time
+        # Quick flash of completion
+        self.console.print(
+            f"  [dim]└─ {self.tool_name} completed in {elapsed:.2f}s[/dim]"
+        )
 
 SYSTEM_PROMPT = """
 You are a coding assistant whose goal it is to help us solve coding tasks.
@@ -1076,21 +1185,31 @@ def execute_llm_call_streaming(client: OpenAI, model: str, conversation: List[Di
     """Execute LLM call with streaming output."""
     global session
     full_response = ""
+    display = StreamingDisplay(console)
 
     try:
-        with Live(console=console, refresh_per_second=10, transient=True) as live:
+        with Live(console=console, refresh_per_second=12, transient=True) as live:
+            # Show initial thinking state
+            live.update(Text("● Thinking...", style="bold cyan"))
+
             stream = client.chat.completions.create(
                 model=model,
                 messages=conversation,
                 stream=True
             )
 
+            first_chunk = True
             for chunk in stream:
                 if chunk.choices[0].delta.content:
                     content = chunk.choices[0].delta.content
                     full_response += content
-                    # Show streaming text
-                    live.update(Text(full_response, style="yellow"))
+
+                    # Show streaming text with animated cursor
+                    live.update(display.render_with_header(full_response))
+
+            # Show completion state briefly
+            live.update(display.render_with_header(full_response, is_complete=True))
+            time.sleep(0.3)
 
         # Track tokens and update connection status
         session.connected = True
@@ -1098,20 +1217,26 @@ def execute_llm_call_streaming(client: OpenAI, model: str, conversation: List[Di
         output_tokens = estimate_tokens(full_response)
         session.add_tokens(input_tokens + output_tokens)
 
+        # Success sound
+        play_sound("complete")
+
         return full_response
     except APIConnectionError as e:
         session.connected = False
         session.last_error = str(e)
+        play_sound("error")
         display_connection_error(base_url, model, e)
         return None
     except APIStatusError as e:
         session.connected = False
         session.last_error = str(e)
+        play_sound("error")
         display_connection_error(base_url, model, e)
         return None
     except Exception as e:
         session.connected = False
         session.last_error = str(e)
+        play_sound("error")
         display_connection_error(base_url, model, e)
         return None
 
@@ -1288,7 +1413,15 @@ def process_agent_turn(
         for name, args in tool_invocations:
             display_tool_call(name, args)
 
-            result = execute_tool(name, args)
+            # Execute tool with animation
+            with ToolExecutionDisplay(console, name):
+                result = execute_tool(name, args)
+
+            # Play sound based on result
+            if result.get("error"):
+                play_sound("error")
+            else:
+                play_sound("success")
 
             display_tool_result(result, name)
 
