@@ -1,0 +1,46 @@
+[project]
+name = "aigent"
+version = "0.1.0"
+description = "AI Coding Assistant powered by Ollama"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["ai", "coding", "assistant", "ollama", "llm", "agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Code Generators",
+]
+dependencies = [
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+aigent = "aigent:main"
+
+[project.urls]
+Homepage = "https://github.com/robertftenbosch/aigent"
+Repository = "https://github.com/robertftenbosch/aigent"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["aigent"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "aigent/",
+    "README.md",
+    "LICENSE",
+]
