@@ -572,7 +572,7 @@ THINKING_DOTS = ["", ".", "..", "..."]
 
 def play_sound(sound_type: str = "success"):
     """Play a terminal bell sound. Can be disabled via environment variable."""
-    if os.environ.get("AIGENT_SOUNDS", "1") == "0":
+    if os.environ.get("AIGENT_SOUNDS", "0") != "1":
         return
 
     if sound_type == "success":
