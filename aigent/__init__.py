@@ -1934,8 +1934,10 @@ def display_help():
     cmd_table.add_column("Command", style="cyan")
     cmd_table.add_column("Description")
     cmd_table.add_row("/help", "Show this help message")
-    cmd_table.add_row("/project", "Project management (init, info, memory)")
+    cmd_table.add_row("/model", "Show current model")
+    cmd_table.add_row("/model <name>", "Switch to a different model")
     cmd_table.add_row("/models", "List available Ollama models")
+    cmd_table.add_row("/project", "Project management (init, info, memory)")
     cmd_table.add_row("/tools", "List available tools")
     cmd_table.add_row("/clear", "Clear conversation history")
     cmd_table.add_row("/exit", "Exit the agent")
@@ -2318,35 +2320,61 @@ def get_multiline_input() -> Optional[str]:
     return "\n".join(lines).strip()
 
 
-def handle_slash_command(command: str, model: str, base_url: str) -> Optional[str]:
-    """Handle slash commands. Returns None to continue, 'exit' to exit, 'clear' to clear."""
-    cmd_lower = command.lower().strip()
+def handle_slash_command(command: str, model: str, base_url: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Handle slash commands.
+    Returns (action, new_model) where:
+    - action: None (not a command), 'exit', 'clear', 'continue'
+    - new_model: New model name if switched, None otherwise
+    """
     cmd_parts = command.strip().split(maxsplit=1)
     cmd = cmd_parts[0].lower()
     args = cmd_parts[1] if len(cmd_parts) > 1 else ""
 
     if cmd in ("/exit", "/quit"):
         console.print("[dim]Goodbye![/dim]")
-        return "exit"
+        return "exit", None
     elif cmd == "/clear":
         console.print("[dim]Conversation cleared.[/dim]")
-        return "clear"
+        return "clear", None
     elif cmd == "/help":
         display_help()
-        return "continue"
+        return "continue", None
     elif cmd == "/model":
-        console.print(f"[dim]Current model:[/dim] [cyan]{model}[/cyan]")
-        return "continue"
+        if args:
+            # Switch to new model
+            new_model = args.strip()
+            # Verify model exists by checking available models
+            models = fetch_ollama_models(base_url)
+            if models:
+                available = [m.get("name", "").split(":")[0] for m in models]
+                available_full = [m.get("name", "") for m in models]
+                if new_model in available or new_model in available_full:
+                    console.print(f"[green]✓[/green] Switched to model: [cyan]{new_model}[/cyan]")
+                    return "continue", new_model
+                else:
+                    console.print(f"[red]✗[/red] Model not found: [cyan]{new_model}[/cyan]")
+                    console.print(f"[dim]Available: {', '.join(available[:5])}{'...' if len(available) > 5 else ''}[/dim]")
+                    return "continue", None
+            else:
+                # Can't verify, just switch
+                console.print(f"[yellow]![/yellow] Switching to model: [cyan]{new_model}[/cyan] (could not verify)")
+                return "continue", new_model
+        else:
+            # Show current model
+            console.print(f"[dim]Current model:[/dim] [cyan]{model}[/cyan]")
+            console.print(f"[dim]Switch with:[/dim] /model <name>")
+            return "continue", None
     elif cmd == "/models":
         display_models(base_url, model)
-        return "continue"
+        return "continue", None
     elif cmd == "/tools":
         display_tools()
-        return "continue"
+        return "continue", None
     elif cmd == "/project":
-        return handle_project_command(args)
+        return handle_project_command(args), None
 
-    return None  # Not a slash command
+    return None, None  # Not a slash command
 
 
 # =============================================================================
@@ -2828,7 +2856,11 @@ def run_coding_agent_loop(
 
             # Handle slash commands
             if user_input.startswith("/"):
-                result = handle_slash_command(user_input, model, base_url)
+                result, new_model = handle_slash_command(user_input, model, base_url)
+                if new_model:
+                    model = new_model
+                    session.model = new_model
+                    display_status_bar()
                 if result == "exit":
                     break
                 elif result == "clear":

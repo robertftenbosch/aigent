@@ -83,7 +83,7 @@
 [x] Python package tools (pip_list, pip_show, pip_check, pypi_info)
 [ ] /undo - laatste actie ongedaan maken
 [ ] Diff view voor file changes
-[ ] Model switching mid-session (/model mistral)
+[x] Model switching mid-session (/model mistral)
 [ ] Auto-retry bij connection errors
 [ ] Config bestand (~/.aigentrc)
 
