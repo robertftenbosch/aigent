@@ -1182,18 +1182,25 @@ def display_tool_result(result: Dict[str, Any], name: str):
         rc = result.get("return_code", "N/A")
         rc_style = "green" if rc == 0 else "red"
 
+        # Get command for title
+        cmd = result.get("command", name)
+        if len(cmd) > 50:
+            cmd = cmd[:47] + "..."
+
         # Use diff syntax highlighting for git diff
         if name == "git_diff" and result.get("stdout"):
             content = Syntax(result["stdout"][:3000], "diff", theme="monokai", line_numbers=False)
             console.print(Panel(
                 content,
-                title=f"[bold green]Git Diff[/bold green] [dim](exit: [{rc_style}]{rc}[/{rc_style}])[/dim]",
+                title=f"[bold green]$ {cmd}[/bold green] [dim](exit: [{rc_style}]{rc}[/{rc_style}])[/dim]",
                 border_style="green"
             ))
         else:
+            # Show output with syntax highlighting for better visibility
+            output_text = output[:3000] + ("..." if len(output) > 3000 else "")
             console.print(Panel(
-                Text.from_markup(output[:2000] + ("..." if len(output) > 2000 else "")),
-                title=f"[bold green]Command Output[/bold green] [dim](exit: [{rc_style}]{rc}[/{rc_style}])[/dim]",
+                Syntax(output_text, "bash", theme="monokai", line_numbers=False) if output_parts else Text.from_markup(output),
+                title=f"[bold green]$ {cmd}[/bold green] [dim](exit: [{rc_style}]{rc}[/{rc_style}])[/dim]",
                 border_style="green"
             ))
     else:
