@@ -88,7 +88,11 @@
 [ ] Diff view voor file changes
 [x] Model switching mid-session (/model mistral)
 [ ] Auto-retry bij connection errors
-[ ] Config bestand (~/.aigentrc)
+[x] Config bestand (~/.aigentrc)
+    - Taalvoorkeur (nl/en)
+    - Default model, vision model
+    - Sounds, show_tokens, theme
+    - /config commands (show, init, set, reload)
 
 ### Integraties
 [ ] GitHub PR creation tool

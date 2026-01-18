@@ -77,6 +77,309 @@ session = SessionState()
 
 
 # =============================================================================
+# GLOBAL CONFIGURATION
+# =============================================================================
+
+CONFIG_LOCATIONS = [
+    Path.home() / ".aigentrc",
+    Path.home() / ".config" / "aigent" / "config.json",
+]
+
+DEFAULT_CONFIG = {
+    # Language: "nl" (Nederlands) or "en" (English)
+    "language": "nl",
+
+    # Default model to use
+    "default_model": "nemotron-3-nano",
+
+    # Vision model for image analysis (when main model lacks vision)
+    "vision_model": "llava",
+
+    # Enable sounds (true/false)
+    "sounds": False,
+
+    # Show token count per request
+    "show_tokens": True,
+
+    # Auto-confirm safe operations (skip confirmation for non-destructive)
+    "auto_confirm_safe": False,
+
+    # Maximum tokens before warning
+    "token_warning_threshold": 50000,
+
+    # Custom system prompt additions
+    "custom_system_prompt": "",
+
+    # Theme (for future use)
+    "theme": "default",
+}
+
+# Language-specific system prompt additions
+LANGUAGE_PROMPTS = {
+    "nl": "Je bent een behulpzame AI coding assistent. Antwoord in het Nederlands tenzij de gebruiker Engels spreekt.",
+    "en": "You are a helpful AI coding assistant. Respond in English unless the user speaks another language.",
+}
+
+
+@dataclass
+class AigentConfig:
+    """Global aigent configuration."""
+    language: str = "nl"
+    default_model: str = "nemotron-3-nano"
+    vision_model: str = "llava"
+    sounds: bool = False
+    show_tokens: bool = True
+    auto_confirm_safe: bool = False
+    token_warning_threshold: int = 50000
+    custom_system_prompt: str = ""
+    theme: str = "default"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "language": self.language,
+            "default_model": self.default_model,
+            "vision_model": self.vision_model,
+            "sounds": self.sounds,
+            "show_tokens": self.show_tokens,
+            "auto_confirm_safe": self.auto_confirm_safe,
+            "token_warning_threshold": self.token_warning_threshold,
+            "custom_system_prompt": self.custom_system_prompt,
+            "theme": self.theme,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AigentConfig":
+        return cls(
+            language=data.get("language", "nl"),
+            default_model=data.get("default_model", "nemotron-3-nano"),
+            vision_model=data.get("vision_model", "llava"),
+            sounds=data.get("sounds", False),
+            show_tokens=data.get("show_tokens", True),
+            auto_confirm_safe=data.get("auto_confirm_safe", False),
+            token_warning_threshold=data.get("token_warning_threshold", 50000),
+            custom_system_prompt=data.get("custom_system_prompt", ""),
+            theme=data.get("theme", "default"),
+        )
+
+
+# Global config
+config = AigentConfig()
+
+
+def find_config_file() -> Optional[Path]:
+    """Find existing config file."""
+    for path in CONFIG_LOCATIONS:
+        if path.exists():
+            return path
+    return None
+
+
+def load_config() -> AigentConfig:
+    """Load configuration from file."""
+    global config
+
+    config_path = find_config_file()
+
+    if config_path:
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            config = AigentConfig.from_dict(data)
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not load config: {e}[/yellow]")
+            config = AigentConfig()
+    else:
+        config = AigentConfig()
+
+    # Override with environment variables
+    if os.environ.get("OLLAMA_MODEL"):
+        config.default_model = os.environ["OLLAMA_MODEL"]
+    if os.environ.get("AIGENT_VISION_MODEL"):
+        config.vision_model = os.environ["AIGENT_VISION_MODEL"]
+    if os.environ.get("AIGENT_SOUNDS"):
+        config.sounds = os.environ["AIGENT_SOUNDS"] == "1"
+    if os.environ.get("AIGENT_LANGUAGE"):
+        config.language = os.environ["AIGENT_LANGUAGE"]
+
+    return config
+
+
+def save_config(config_path: Optional[Path] = None) -> bool:
+    """Save configuration to file."""
+    if config_path is None:
+        config_path = CONFIG_LOCATIONS[0]  # Default to ~/.aigentrc
+
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config.to_dict(), f, indent=2)
+        return True
+    except Exception as e:
+        console.print(f"[red]Error saving config: {e}[/red]")
+        return False
+
+
+def create_default_config() -> Path:
+    """Create a default config file with comments."""
+    config_path = CONFIG_LOCATIONS[0]
+
+    config_content = '''{
+  "language": "nl",
+  "default_model": "nemotron-3-nano",
+  "vision_model": "llava",
+  "sounds": false,
+  "show_tokens": true,
+  "auto_confirm_safe": false,
+  "token_warning_threshold": 50000,
+  "custom_system_prompt": "",
+  "theme": "default"
+}
+'''
+
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.write(config_content)
+        return config_path
+    except Exception:
+        return None
+
+
+def display_config():
+    """Display current configuration."""
+    config_path = find_config_file()
+
+    table = Table(show_header=True, header_style="bold cyan", title="Configuration")
+    table.add_column("Setting", style="cyan")
+    table.add_column("Value", style="green")
+    table.add_column("Description", style="dim")
+
+    table.add_row("language", config.language, "nl=Nederlands, en=English")
+    table.add_row("default_model", config.default_model, "Default Ollama model")
+    table.add_row("vision_model", config.vision_model, "Model for image analysis")
+    table.add_row("sounds", str(config.sounds).lower(), "Enable/disable sounds")
+    table.add_row("show_tokens", str(config.show_tokens).lower(), "Show token count")
+    table.add_row("auto_confirm_safe", str(config.auto_confirm_safe).lower(), "Auto-confirm safe ops")
+    table.add_row("token_warning_threshold", str(config.token_warning_threshold), "Warn at token count")
+    table.add_row("theme", config.theme, "Color theme")
+
+    console.print(Panel(table, border_style="blue"))
+
+    if config_path:
+        console.print(f"[dim]Config file: {config_path}[/dim]")
+    else:
+        console.print(f"[dim]No config file found. Create with: /config init[/dim]")
+
+
+def handle_config_command(args: str) -> str:
+    """Handle /config commands."""
+    global config
+
+    parts = args.strip().split(maxsplit=1)
+    subcmd = parts[0].lower() if parts else ""
+    subargs = parts[1] if len(parts) > 1 else ""
+
+    if subcmd == "" or subcmd == "show":
+        display_config()
+        return "continue"
+
+    elif subcmd == "init":
+        path = create_default_config()
+        if path:
+            console.print(f"[green]✓[/green] Created config file: [cyan]{path}[/cyan]")
+            console.print("[dim]Edit this file to customize aigent.[/dim]")
+        else:
+            console.print("[red]✗[/red] Failed to create config file")
+        return "continue"
+
+    elif subcmd == "set":
+        # /config set key value
+        set_parts = subargs.split(maxsplit=1)
+        if len(set_parts) < 2:
+            console.print("[yellow]Usage: /config set <key> <value>[/yellow]")
+            return "continue"
+
+        key, value = set_parts
+        key = key.lower()
+
+        if key == "language":
+            if value in ("nl", "en"):
+                config.language = value
+                console.print(f"[green]✓[/green] Language set to: [cyan]{value}[/cyan]")
+            else:
+                console.print("[yellow]Valid languages: nl, en[/yellow]")
+        elif key == "default_model":
+            config.default_model = value
+            console.print(f"[green]✓[/green] Default model set to: [cyan]{value}[/cyan]")
+        elif key == "vision_model":
+            config.vision_model = value
+            console.print(f"[green]✓[/green] Vision model set to: [cyan]{value}[/cyan]")
+        elif key == "sounds":
+            config.sounds = value.lower() in ("true", "1", "yes", "on")
+            console.print(f"[green]✓[/green] Sounds: [cyan]{config.sounds}[/cyan]")
+        elif key == "show_tokens":
+            config.show_tokens = value.lower() in ("true", "1", "yes", "on")
+            console.print(f"[green]✓[/green] Show tokens: [cyan]{config.show_tokens}[/cyan]")
+        elif key == "theme":
+            config.theme = value
+            console.print(f"[green]✓[/green] Theme set to: [cyan]{value}[/cyan]")
+        else:
+            console.print(f"[yellow]Unknown setting: {key}[/yellow]")
+            return "continue"
+
+        # Auto-save after change
+        save_config()
+        return "continue"
+
+    elif subcmd == "reload":
+        load_config()
+        console.print("[green]✓[/green] Configuration reloaded")
+        return "continue"
+
+    elif subcmd == "path":
+        path = find_config_file()
+        if path:
+            console.print(f"Config file: [cyan]{path}[/cyan]")
+        else:
+            console.print("[dim]No config file found[/dim]")
+            console.print(f"[dim]Will be created at: {CONFIG_LOCATIONS[0]}[/dim]")
+        return "continue"
+
+    elif subcmd == "help":
+        help_text = """
+[bold]Config Commands:[/bold]
+
+  /config              Show current configuration
+  /config init         Create default config file
+  /config set <k> <v>  Set a configuration value
+  /config reload       Reload config from file
+  /config path         Show config file location
+  /config help         Show this help
+
+[bold]Settings:[/bold]
+
+  language       nl/en - Response language
+  default_model  Default Ollama model
+  vision_model   Model for image analysis
+  sounds         true/false - Enable sounds
+  show_tokens    true/false - Show token counts
+  theme          Color theme (future)
+
+[bold]Examples:[/bold]
+
+  /config set language en
+  /config set default_model mistral
+  /config set sounds true
+"""
+        console.print(Panel(help_text.strip(), title="[bold]Config Help[/bold]", border_style="blue"))
+        return "continue"
+
+    else:
+        console.print(f"[yellow]Unknown config command: {subcmd}[/yellow]")
+        console.print("[dim]Use /config help for available commands[/dim]")
+        return "continue"
+
+
+# =============================================================================
 # PROJECT MANAGEMENT
 # =============================================================================
 
@@ -575,8 +878,9 @@ THINKING_DOTS = ["", ".", "..", "..."]
 
 
 def play_sound(sound_type: str = "success"):
-    """Play a terminal bell sound. Can be disabled via environment variable."""
-    if os.environ.get("AIGENT_SOUNDS", "0") != "1":
+    """Play a terminal bell sound. Can be disabled via config or environment variable."""
+    # Check config first, then env var
+    if not config.sounds and os.environ.get("AIGENT_SOUNDS", "0") != "1":
         return
 
     if sound_type == "success":
@@ -709,6 +1013,8 @@ class ToolExecutionDisplay:
         )
 
 SYSTEM_PROMPT = """
+{language_instruction}
+
 You are a coding assistant whose goal it is to help us solve coding tasks.
 You have access to a series of tools you can execute. Here are the tools you can execute:
 
@@ -717,7 +1023,7 @@ You have access to a series of tools you can execute. Here are the tools you can
 When you want to use a tool, reply with exactly one line in the format: 'tool: TOOL_NAME({{JSON_ARGS}})' and nothing else.
 Use compact single-line JSON with double quotes. After receiving a tool_result(...) message, continue the task.
 If no tool is needed, respond normally. Use markdown formatting in your responses.
-{project_context}
+{project_context}{custom_prompt}
 """
 
 
@@ -1778,7 +2084,20 @@ def get_full_system_prompt():
     else:
         project_ctx = ""
 
-    return SYSTEM_PROMPT.format(tool_list_repr=tool_str_repr, project_context=project_ctx)
+    # Get language instruction
+    language_instruction = LANGUAGE_PROMPTS.get(config.language, LANGUAGE_PROMPTS["en"])
+
+    # Get custom prompt
+    custom_prompt = ""
+    if config.custom_system_prompt:
+        custom_prompt = f"\n\n{config.custom_system_prompt}"
+
+    return SYSTEM_PROMPT.format(
+        tool_list_repr=tool_str_repr,
+        project_context=project_ctx,
+        language_instruction=language_instruction,
+        custom_prompt=custom_prompt
+    )
 
 
 def parse_positional_args(args_str: str) -> List[str]:
@@ -2196,6 +2515,7 @@ def display_help():
     cmd_table.add_column("Command", style="cyan")
     cmd_table.add_column("Description")
     cmd_table.add_row("/help", "Show this help message")
+    cmd_table.add_row("/config", "Show/edit configuration")
     cmd_table.add_row("/model", "Show current model")
     cmd_table.add_row("/model <name>", "Switch to a different model")
     cmd_table.add_row("/models", "List available Ollama models")
@@ -2360,7 +2680,7 @@ def display_models(base_url: str, current_model: str):
 # =============================================================================
 
 # Available slash commands for completion
-SLASH_COMMANDS = ["/help", "/clear", "/model", "/models", "/tools", "/project", "/exit", "/quit"]
+SLASH_COMMANDS = ["/help", "/clear", "/config", "/model", "/models", "/tools", "/project", "/exit", "/quit"]
 
 
 class AigentCompleter:
@@ -2635,6 +2955,8 @@ def handle_slash_command(command: str, model: str, base_url: str) -> Tuple[Optio
         return "continue", None
     elif cmd == "/project":
         return handle_project_command(args), None
+    elif cmd == "/config":
+        return handle_config_command(args), None
 
     return None, None  # Not a slash command
 
@@ -3066,14 +3388,21 @@ def execute_tool(name: str, args: Dict[str, Any], skip_confirm: bool = False) ->
 # =============================================================================
 
 def run_coding_agent_loop(
-    model: str = "nemotron-3-nano",
+    model: str = "",
     base_url: str = "http://localhost:11434/v1",
     stream: bool = True,
     single_command: Optional[str] = None,
     verbose: bool = False
 ):
     """Main agent loop."""
-    global session, current_project, project_path
+    global session, current_project, project_path, config
+
+    # Load global configuration
+    load_config()
+
+    # Use config default model if none specified
+    if not model:
+        model = config.default_model
 
     # Initialize session state
     session = SessionState(

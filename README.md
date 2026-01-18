@@ -94,9 +94,12 @@ aigent -v
 | Command | Description |
 |---------|-------------|
 | `/help` | Show help |
-| `/clear` | Clear conversation |
-| `/model` | Show current model |
+| `/config` | Show/edit configuration |
+| `/model` | Show or switch model |
+| `/models` | List available models |
+| `/project` | Project management |
 | `/tools` | List available tools |
+| `/clear` | Clear conversation |
 | `/exit` | Exit aigent |
 
 ### Multi-line Input
@@ -176,14 +179,48 @@ End your input with `;;` on a new line for multi-line prompts.
 - Otherwise, a dedicated vision model is used as an agent
 - Default vision model: `llava` (configurable via `AIGENT_VISION_MODEL`)
 
+## Configuration
+
+Create a config file with `/config init` or manually at `~/.aigentrc`:
+
+```json
+{
+  "language": "nl",
+  "default_model": "nemotron-3-nano",
+  "vision_model": "llava",
+  "sounds": false,
+  "show_tokens": true,
+  "theme": "default"
+}
+```
+
+| Setting | Description |
+|---------|-------------|
+| `language` | Response language: `nl` (Nederlands) or `en` (English) |
+| `default_model` | Default Ollama model |
+| `vision_model` | Model for image analysis |
+| `sounds` | Enable/disable sounds |
+| `show_tokens` | Show token counts |
+| `custom_system_prompt` | Add custom instructions |
+
+### Config Commands
+
+```bash
+/config              # Show current config
+/config init         # Create default config file
+/config set key val  # Change a setting
+/config reload       # Reload from file
+```
+
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `OLLAMA_MODEL` | Default model to use |
+| `OLLAMA_MODEL` | Default model (overrides config) |
 | `OLLAMA_BASE_URL` | Ollama API base URL |
-| `AIGENT_VISION_MODEL` | Vision model for image analysis (default: llava) |
-| `AIGENT_SOUNDS` | Enable sounds: 1=on, 0=off (default: 0) |
+| `AIGENT_VISION_MODEL` | Vision model (overrides config) |
+| `AIGENT_SOUNDS` | Enable sounds: 1=on (overrides config) |
+| `AIGENT_LANGUAGE` | Language: nl/en (overrides config) |
 
 ## License
 
