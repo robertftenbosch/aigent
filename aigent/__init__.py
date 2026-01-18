@@ -7,6 +7,8 @@ import re
 import readline
 import subprocess
 import sys
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 
@@ -619,6 +621,7 @@ def display_help():
     table.add_row("/help", "Show this help message")
     table.add_row("/clear", "Clear conversation history")
     table.add_row("/model", "Show current model")
+    table.add_row("/models", "List available Ollama models with capabilities")
     table.add_row("/tools", "List available tools")
     table.add_row("/exit, /quit", "Exit the agent")
     table.add_row(";;", "End multi-line input (on new line)")
@@ -635,6 +638,131 @@ def display_tools():
         first_line = doc.strip().split("\n")[0].strip()
         table.add_row(name, first_line)
     console.print(Panel(table, title="[bold]Available Tools[/bold]", border_style="blue"))
+
+
+def fetch_ollama_models(base_url: str) -> Optional[List[Dict[str, Any]]]:
+    """Fetch available models from Ollama API."""
+    # Convert OpenAI-compatible URL to Ollama native API
+    ollama_url = base_url.replace("/v1", "").rstrip("/")
+
+    try:
+        # Get list of models
+        req = urllib.request.Request(f"{ollama_url}/api/tags")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode())
+            return data.get("models", [])
+    except Exception as e:
+        console.print(f"[red]Could not fetch models: {e}[/red]")
+        return None
+
+
+def get_model_capabilities(model_info: Dict[str, Any], base_url: str) -> Dict[str, bool]:
+    """Determine model capabilities based on model details."""
+    model_name = model_info.get("name", "").lower()
+    details = model_info.get("details", {})
+    families = details.get("families", []) or []
+
+    # Convert families to lowercase for comparison
+    families_lower = [f.lower() for f in families]
+
+    capabilities = {
+        "vision": False,
+        "tools": False,
+        "thinking": False,
+        "embedding": False,
+        "code": False,
+    }
+
+    # Check for vision capability
+    if "clip" in families_lower or "vision" in model_name or "llava" in model_name:
+        capabilities["vision"] = True
+
+    # Check for tool/function calling capability
+    tool_models = ["qwen", "mistral", "llama3", "nemotron", "granite", "command-r", "firefunction"]
+    if any(t in model_name for t in tool_models):
+        capabilities["tools"] = True
+
+    # Check for thinking/reasoning capability
+    thinking_models = ["deepseek", "qwq", "thinking", "reason", "r1"]
+    if any(t in model_name for t in thinking_models):
+        capabilities["thinking"] = True
+
+    # Check for embedding models
+    if "embed" in model_name or "nomic" in model_name or "bge" in model_name:
+        capabilities["embedding"] = True
+
+    # Check for code-specialized models
+    code_models = ["code", "starcoder", "codellama", "deepseek-coder", "codegemma", "qwen2.5-coder"]
+    if any(c in model_name for c in code_models):
+        capabilities["code"] = True
+
+    return capabilities
+
+
+def format_size(size_bytes: int) -> str:
+    """Format bytes to human readable size."""
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} TB"
+
+
+def display_models(base_url: str, current_model: str):
+    """Display available Ollama models with their capabilities."""
+    with console.status("[bold cyan]Fetching models...[/bold cyan]", spinner="dots"):
+        models = fetch_ollama_models(base_url)
+
+    if models is None:
+        return
+
+    if not models:
+        console.print(Panel(
+            "[yellow]No models installed.[/yellow]\n\n"
+            "Install a model with: [cyan]ollama pull <model>[/cyan]",
+            title="[bold]Models[/bold]",
+            border_style="blue"
+        ))
+        return
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Model", style="cyan")
+    table.add_column("Size", style="dim", justify="right")
+    table.add_column("Vision", justify="center")
+    table.add_column("Tools", justify="center")
+    table.add_column("Thinking", justify="center")
+    table.add_column("Code", justify="center")
+    table.add_column("Embed", justify="center")
+
+    for model in sorted(models, key=lambda x: x.get("name", "")):
+        name = model.get("name", "unknown")
+        size = model.get("size", 0)
+
+        # Mark current model
+        if name == current_model or name.split(":")[0] == current_model:
+            name = f"[bold green]► {name}[/bold green]"
+
+        caps = get_model_capabilities(model, base_url)
+
+        def cap_icon(enabled: bool) -> str:
+            return "[green]✓[/green]" if enabled else "[dim]–[/dim]"
+
+        table.add_row(
+            name,
+            format_size(size),
+            cap_icon(caps["vision"]),
+            cap_icon(caps["tools"]),
+            cap_icon(caps["thinking"]),
+            cap_icon(caps["code"]),
+            cap_icon(caps["embedding"]),
+        )
+
+    console.print(Panel(
+        table,
+        title="[bold]Available Models[/bold]",
+        subtitle="[dim]Vision=image input | Tools=function calling | Thinking=reasoning | Code=programming | Embed=embeddings[/dim]",
+        border_style="blue"
+    ))
 
 
 # =============================================================================
@@ -691,7 +819,7 @@ def get_multiline_input() -> Optional[str]:
     return "\n".join(lines).strip()
 
 
-def handle_slash_command(command: str, model: str) -> Optional[str]:
+def handle_slash_command(command: str, model: str, base_url: str) -> Optional[str]:
     """Handle slash commands. Returns None to continue, 'exit' to exit, 'clear' to clear."""
     cmd = command.lower().strip()
 
@@ -706,6 +834,9 @@ def handle_slash_command(command: str, model: str) -> Optional[str]:
         return "continue"
     elif cmd == "/model":
         console.print(f"[dim]Current model:[/dim] [cyan]{model}[/cyan]")
+        return "continue"
+    elif cmd == "/models":
+        display_models(base_url, model)
         return "continue"
     elif cmd == "/tools":
         display_tools()
@@ -864,7 +995,7 @@ def run_coding_agent_loop(
 
             # Handle slash commands
             if user_input.startswith("/"):
-                result = handle_slash_command(user_input, model)
+                result = handle_slash_command(user_input, model, base_url)
                 if result == "exit":
                     break
                 elif result == "clear":
