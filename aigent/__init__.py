@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Tuple, Optional
 
 from openai import OpenAI, APIConnectionError, APIStatusError
 from dotenv import load_dotenv
-from rich.console import Console
+from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -22,6 +22,10 @@ from rich.table import Table
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.text import Text
+from rich.rule import Rule
+from rich.columns import Columns
+from dataclasses import dataclass, field
+from datetime import datetime
 
 load_dotenv()
 
@@ -30,6 +34,92 @@ console = Console()
 
 # History file for readline
 HISTORY_FILE = Path.home() / ".aigent_history"
+
+
+@dataclass
+class SessionState:
+    """Track session state for status bar."""
+    model: str = ""
+    base_url: str = ""
+    connected: bool = False
+    total_tokens: int = 0
+    request_count: int = 0
+    last_request_tokens: int = 0
+    start_time: datetime = field(default_factory=datetime.now)
+    last_error: Optional[str] = None
+
+    def add_tokens(self, tokens: int):
+        self.total_tokens += tokens
+        self.last_request_tokens = tokens
+        self.request_count += 1
+
+    def get_uptime(self) -> str:
+        delta = datetime.now() - self.start_time
+        minutes = int(delta.total_seconds() // 60)
+        if minutes < 60:
+            return f"{minutes}m"
+        hours = minutes // 60
+        mins = minutes % 60
+        return f"{hours}h{mins}m"
+
+
+# Global session state
+session = SessionState()
+
+
+def display_status_bar():
+    """Display the status bar at the bottom of the screen."""
+    # Get terminal width
+    width = console.width
+
+    # Build status components
+    model_part = f"[cyan]{session.model}[/cyan]"
+
+    # Shorten path if too long
+    cwd = str(Path.cwd())
+    home = str(Path.home())
+    if cwd.startswith(home):
+        cwd = "~" + cwd[len(home):]
+    if len(cwd) > 30:
+        cwd = "..." + cwd[-27:]
+    cwd_part = f"[blue]{cwd}[/blue]"
+
+    # Token count
+    if session.total_tokens > 0:
+        if session.total_tokens >= 1000:
+            token_str = f"{session.total_tokens / 1000:.1f}k"
+        else:
+            token_str = str(session.total_tokens)
+        tokens_part = f"[dim]tokens:[/dim] [yellow]{token_str}[/yellow]"
+    else:
+        tokens_part = ""
+
+    # Connection status
+    if session.connected:
+        status_part = "[green]● connected[/green]"
+    else:
+        status_part = "[red]● disconnected[/red]"
+
+    # Uptime
+    uptime_part = f"[dim]{session.get_uptime()}[/dim]"
+
+    # Build the status line
+    parts = [model_part, cwd_part]
+    if tokens_part:
+        parts.append(tokens_part)
+    parts.append(status_part)
+    parts.append(uptime_part)
+
+    status_text = " │ ".join(parts)
+
+    # Print separator and status
+    console.print(Rule(style="dim"))
+    console.print(f" {status_text}", highlight=False)
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough estimation of tokens (approx 4 chars per token)."""
+    return len(text) // 4
 
 SYSTEM_PROMPT = """
 You are a coding assistant whose goal it is to help us solve coding tasks.
@@ -881,6 +971,7 @@ def display_connection_error(base_url: str, model: str, error: Exception):
 
 def execute_llm_call_streaming(client: OpenAI, model: str, conversation: List[Dict[str, str]], base_url: str) -> Optional[str]:
     """Execute LLM call with streaming output."""
+    global session
     full_response = ""
 
     try:
@@ -898,20 +989,33 @@ def execute_llm_call_streaming(client: OpenAI, model: str, conversation: List[Di
                     # Show streaming text
                     live.update(Text(full_response, style="yellow"))
 
+        # Track tokens and update connection status
+        session.connected = True
+        input_tokens = sum(estimate_tokens(m.get("content", "")) for m in conversation)
+        output_tokens = estimate_tokens(full_response)
+        session.add_tokens(input_tokens + output_tokens)
+
         return full_response
     except APIConnectionError as e:
+        session.connected = False
+        session.last_error = str(e)
         display_connection_error(base_url, model, e)
         return None
     except APIStatusError as e:
+        session.connected = False
+        session.last_error = str(e)
         display_connection_error(base_url, model, e)
         return None
     except Exception as e:
+        session.connected = False
+        session.last_error = str(e)
         display_connection_error(base_url, model, e)
         return None
 
 
 def execute_llm_call(client: OpenAI, model: str, conversation: List[Dict[str, str]], base_url: str, stream: bool = True) -> Optional[str]:
     """Execute LLM call."""
+    global session
     try:
         if stream:
             return execute_llm_call_streaming(client, model, conversation, base_url)
@@ -921,14 +1025,29 @@ def execute_llm_call(client: OpenAI, model: str, conversation: List[Dict[str, st
                     model=model,
                     messages=conversation,
                 )
-            return response.choices[0].message.content
+
+            result = response.choices[0].message.content
+
+            # Track tokens
+            session.connected = True
+            input_tokens = sum(estimate_tokens(m.get("content", "")) for m in conversation)
+            output_tokens = estimate_tokens(result)
+            session.add_tokens(input_tokens + output_tokens)
+
+            return result
     except APIConnectionError as e:
+        session.connected = False
+        session.last_error = str(e)
         display_connection_error(base_url, model, e)
         return None
     except APIStatusError as e:
+        session.connected = False
+        session.last_error = str(e)
         display_connection_error(base_url, model, e)
         return None
     except Exception as e:
+        session.connected = False
+        session.last_error = str(e)
         display_connection_error(base_url, model, e)
         return None
 
@@ -962,8 +1081,27 @@ def run_coding_agent_loop(
     verbose: bool = False
 ):
     """Main agent loop."""
+    global session
+
+    # Initialize session state
+    session = SessionState(
+        model=model,
+        base_url=base_url,
+        connected=False,
+        start_time=datetime.now()
+    )
 
     client = create_client(base_url)
+
+    # Test connection
+    try:
+        urllib.request.urlopen(
+            base_url.replace("/v1", "") + "/api/tags",
+            timeout=5
+        )
+        session.connected = True
+    except Exception:
+        session.connected = False
 
     setup_readline()
 
@@ -981,10 +1119,12 @@ def run_coding_agent_loop(
     if single_command:
         conversation.append({"role": "user", "content": single_command})
         process_agent_turn(client, model, base_url, conversation, stream, verbose)
+        display_status_bar()
         return
 
     # Interactive mode
     display_welcome()
+    display_status_bar()
 
     try:
         while True:
@@ -1006,6 +1146,7 @@ def run_coding_agent_loop(
 
             conversation.append({"role": "user", "content": user_input})
             process_agent_turn(client, model, base_url, conversation, stream, verbose)
+            display_status_bar()
 
     except KeyboardInterrupt:
         console.print("\n[dim]Interrupted. Goodbye![/dim]")
