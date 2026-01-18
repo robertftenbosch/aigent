@@ -71,13 +71,425 @@ class SessionState:
 session = SessionState()
 
 
+# =============================================================================
+# PROJECT MANAGEMENT
+# =============================================================================
+
+AIGENT_DIR = ".aigent"
+PROJECT_CONFIG_FILE = "config.json"
+PROJECT_MEMORY_FILE = "memory.md"
+
+
+@dataclass
+class ProjectConfig:
+    """Project configuration and metadata."""
+    name: str = ""
+    description: str = ""
+    tech_stack: List[str] = field(default_factory=list)
+    important_files: List[str] = field(default_factory=list)
+    notes: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "tech_stack": self.tech_stack,
+            "important_files": self.important_files,
+            "notes": self.notes,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ProjectConfig":
+        return cls(
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            tech_stack=data.get("tech_stack", []),
+            important_files=data.get("important_files", []),
+            notes=data.get("notes", ""),
+            created_at=data.get("created_at", ""),
+            updated_at=data.get("updated_at", ""),
+        )
+
+
+# Global project state
+current_project: Optional[ProjectConfig] = None
+project_path: Optional[Path] = None
+
+
+def get_aigent_dir(base_path: Path = None) -> Path:
+    """Get the .aigent directory path."""
+    if base_path is None:
+        base_path = Path.cwd()
+    return base_path / AIGENT_DIR
+
+
+def detect_project(start_path: Path = None) -> Optional[Path]:
+    """Detect if we're in a project by looking for .aigent directory."""
+    if start_path is None:
+        start_path = Path.cwd()
+
+    current = start_path.resolve()
+
+    # Walk up the directory tree looking for .aigent
+    while current != current.parent:
+        aigent_dir = current / AIGENT_DIR
+        if aigent_dir.is_dir():
+            return current
+        current = current.parent
+
+    # Check root as well
+    aigent_dir = current / AIGENT_DIR
+    if aigent_dir.is_dir():
+        return current
+
+    return None
+
+
+def load_project(path: Path) -> Optional[ProjectConfig]:
+    """Load project configuration from .aigent directory."""
+    global current_project, project_path
+
+    aigent_dir = get_aigent_dir(path)
+    config_file = aigent_dir / PROJECT_CONFIG_FILE
+
+    if not config_file.exists():
+        return None
+
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        current_project = ProjectConfig.from_dict(data)
+        project_path = path
+        return current_project
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not load project config: {e}[/yellow]")
+        return None
+
+
+def save_project(config: ProjectConfig, path: Path) -> bool:
+    """Save project configuration to .aigent directory."""
+    aigent_dir = get_aigent_dir(path)
+
+    try:
+        aigent_dir.mkdir(parents=True, exist_ok=True)
+        config.updated_at = datetime.now().isoformat()
+
+        config_file = aigent_dir / PROJECT_CONFIG_FILE
+        with open(config_file, "w", encoding="utf-8") as f:
+            json.dump(config.to_dict(), f, indent=2)
+        return True
+    except Exception as e:
+        console.print(f"[red]Error saving project config: {e}[/red]")
+        return False
+
+
+def load_project_memory(path: Path) -> str:
+    """Load project memory/context file."""
+    aigent_dir = get_aigent_dir(path)
+    memory_file = aigent_dir / PROJECT_MEMORY_FILE
+
+    if not memory_file.exists():
+        return ""
+
+    try:
+        return memory_file.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+
+def save_project_memory(content: str, path: Path) -> bool:
+    """Save project memory/context file."""
+    aigent_dir = get_aigent_dir(path)
+
+    try:
+        aigent_dir.mkdir(parents=True, exist_ok=True)
+        memory_file = aigent_dir / PROJECT_MEMORY_FILE
+        memory_file.write_text(content, encoding="utf-8")
+        return True
+    except Exception as e:
+        console.print(f"[red]Error saving project memory: {e}[/red]")
+        return False
+
+
+def get_project_context() -> str:
+    """Get project context for system prompt."""
+    global current_project, project_path
+
+    if current_project is None:
+        return ""
+
+    context_parts = []
+    context_parts.append(f"PROJECT: {current_project.name}")
+
+    if current_project.description:
+        context_parts.append(f"DESCRIPTION: {current_project.description}")
+
+    if current_project.tech_stack:
+        context_parts.append(f"TECH STACK: {', '.join(current_project.tech_stack)}")
+
+    if current_project.important_files:
+        context_parts.append(f"IMPORTANT FILES: {', '.join(current_project.important_files)}")
+
+    if current_project.notes:
+        context_parts.append(f"NOTES: {current_project.notes}")
+
+    # Load memory file
+    if project_path:
+        memory = load_project_memory(project_path)
+        if memory:
+            context_parts.append(f"PROJECT MEMORY:\n{memory}")
+
+    return "\n".join(context_parts)
+
+
+def display_project_info():
+    """Display current project information."""
+    global current_project, project_path
+
+    if current_project is None:
+        console.print(Panel(
+            "[yellow]No project detected.[/yellow]\n\n"
+            "Initialize a project with: [cyan]/project init[/cyan]",
+            title="[bold]Project[/bold]",
+            border_style="blue"
+        ))
+        return
+
+    # Build project info display
+    info_parts = []
+    info_parts.append(f"[bold cyan]Name:[/bold cyan] {current_project.name}")
+
+    if current_project.description:
+        info_parts.append(f"[bold cyan]Description:[/bold cyan] {current_project.description}")
+
+    if project_path:
+        info_parts.append(f"[bold cyan]Path:[/bold cyan] {project_path}")
+
+    if current_project.tech_stack:
+        tech_str = ", ".join(f"[green]{t}[/green]" for t in current_project.tech_stack)
+        info_parts.append(f"[bold cyan]Tech Stack:[/bold cyan] {tech_str}")
+
+    if current_project.important_files:
+        files_str = ", ".join(f"[blue]{f}[/blue]" for f in current_project.important_files)
+        info_parts.append(f"[bold cyan]Important Files:[/bold cyan] {files_str}")
+
+    if current_project.notes:
+        info_parts.append(f"[bold cyan]Notes:[/bold cyan] {current_project.notes}")
+
+    if current_project.created_at:
+        info_parts.append(f"[dim]Created: {current_project.created_at}[/dim]")
+
+    if current_project.updated_at:
+        info_parts.append(f"[dim]Updated: {current_project.updated_at}[/dim]")
+
+    console.print(Panel(
+        "\n".join(info_parts),
+        title="[bold]Project Info[/bold]",
+        border_style="blue"
+    ))
+
+
+def display_project_memory():
+    """Display project memory content."""
+    global project_path
+
+    if project_path is None:
+        console.print("[yellow]No project detected.[/yellow]")
+        return
+
+    memory = load_project_memory(project_path)
+
+    if not memory:
+        console.print(Panel(
+            "[dim]No memory file yet.[/dim]\n\n"
+            "Add memory with: [cyan]/project memory add <text>[/cyan]\n"
+            f"Or edit directly: [cyan]{get_aigent_dir(project_path) / PROJECT_MEMORY_FILE}[/cyan]",
+            title="[bold]Project Memory[/bold]",
+            border_style="blue"
+        ))
+        return
+
+    console.print(Panel(
+        Markdown(memory),
+        title="[bold]Project Memory[/bold]",
+        border_style="blue"
+    ))
+
+
+def init_project_interactive() -> bool:
+    """Initialize a new project interactively."""
+    global current_project, project_path
+
+    cwd = Path.cwd()
+    aigent_dir = get_aigent_dir(cwd)
+
+    if aigent_dir.exists():
+        console.print("[yellow]Project already initialized in this directory.[/yellow]")
+        return False
+
+    console.print("\n[bold cyan]Initialize New Project[/bold cyan]\n")
+
+    # Get project name (default to directory name)
+    default_name = cwd.name
+    console.print(f"[dim]Project name[/dim] [{default_name}]: ", end="")
+    name = input().strip() or default_name
+
+    # Get description
+    console.print("[dim]Description[/dim]: ", end="")
+    description = input().strip()
+
+    # Get tech stack
+    console.print("[dim]Tech stack (comma-separated)[/dim]: ", end="")
+    tech_input = input().strip()
+    tech_stack = [t.strip() for t in tech_input.split(",") if t.strip()] if tech_input else []
+
+    # Get important files
+    console.print("[dim]Important files (comma-separated)[/dim]: ", end="")
+    files_input = input().strip()
+    important_files = [f.strip() for f in files_input.split(",") if f.strip()] if files_input else []
+
+    # Create project config
+    config = ProjectConfig(
+        name=name,
+        description=description,
+        tech_stack=tech_stack,
+        important_files=important_files,
+        notes="",
+        created_at=datetime.now().isoformat(),
+        updated_at=datetime.now().isoformat(),
+    )
+
+    # Save project
+    if save_project(config, cwd):
+        current_project = config
+        project_path = cwd
+
+        # Create initial memory file
+        initial_memory = f"# {name}\n\n## Overview\n{description}\n\n## Notes\n\n"
+        save_project_memory(initial_memory, cwd)
+
+        console.print(f"\n[green]✓[/green] Project '[cyan]{name}[/cyan]' initialized!")
+        console.print(f"[dim]Config: {aigent_dir / PROJECT_CONFIG_FILE}[/dim]")
+        console.print(f"[dim]Memory: {aigent_dir / PROJECT_MEMORY_FILE}[/dim]")
+        return True
+
+    return False
+
+
+def handle_project_command(args: str) -> Optional[str]:
+    """Handle /project commands."""
+    global current_project, project_path
+
+    parts = args.strip().split(maxsplit=1)
+    subcommand = parts[0].lower() if parts else "info"
+    subargs = parts[1] if len(parts) > 1 else ""
+
+    if subcommand in ("info", ""):
+        display_project_info()
+        return "continue"
+
+    elif subcommand == "init":
+        init_project_interactive()
+        return "continue"
+
+    elif subcommand == "memory":
+        if not subargs:
+            display_project_memory()
+        elif subargs.startswith("add "):
+            # Add to memory
+            text = subargs[4:].strip()
+            if project_path and text:
+                current_memory = load_project_memory(project_path)
+                new_memory = current_memory + "\n" + text if current_memory else text
+                if save_project_memory(new_memory, project_path):
+                    console.print("[green]✓[/green] Added to project memory")
+            else:
+                console.print("[yellow]No project or empty text[/yellow]")
+        elif subargs == "clear":
+            if project_path:
+                if save_project_memory("", project_path):
+                    console.print("[green]✓[/green] Project memory cleared")
+        elif subargs == "edit":
+            if project_path:
+                memory_file = get_aigent_dir(project_path) / PROJECT_MEMORY_FILE
+                console.print(f"[dim]Edit: {memory_file}[/dim]")
+        return "continue"
+
+    elif subcommand == "set":
+        # Set project properties
+        if not current_project:
+            console.print("[yellow]No project. Run /project init first.[/yellow]")
+            return "continue"
+
+        if subargs.startswith("name "):
+            current_project.name = subargs[5:].strip()
+            save_project(current_project, project_path)
+            console.print(f"[green]✓[/green] Name set to: {current_project.name}")
+        elif subargs.startswith("desc "):
+            current_project.description = subargs[5:].strip()
+            save_project(current_project, project_path)
+            console.print(f"[green]✓[/green] Description updated")
+        elif subargs.startswith("tech "):
+            tech = [t.strip() for t in subargs[5:].split(",") if t.strip()]
+            current_project.tech_stack = tech
+            save_project(current_project, project_path)
+            console.print(f"[green]✓[/green] Tech stack updated")
+        elif subargs.startswith("files "):
+            files = [f.strip() for f in subargs[6:].split(",") if f.strip()]
+            current_project.important_files = files
+            save_project(current_project, project_path)
+            console.print(f"[green]✓[/green] Important files updated")
+        elif subargs.startswith("notes "):
+            current_project.notes = subargs[6:].strip()
+            save_project(current_project, project_path)
+            console.print(f"[green]✓[/green] Notes updated")
+        else:
+            console.print("[dim]Usage: /project set <name|desc|tech|files|notes> <value>[/dim]")
+        return "continue"
+
+    elif subcommand == "help":
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Command", style="cyan")
+        table.add_column("Description")
+        table.add_row("/project", "Show project info")
+        table.add_row("/project init", "Initialize new project")
+        table.add_row("/project info", "Show project info")
+        table.add_row("/project memory", "Show project memory")
+        table.add_row("/project memory add <text>", "Add to project memory")
+        table.add_row("/project memory clear", "Clear project memory")
+        table.add_row("/project set name <name>", "Set project name")
+        table.add_row("/project set desc <text>", "Set description")
+        table.add_row("/project set tech <a,b,c>", "Set tech stack")
+        table.add_row("/project set files <a,b>", "Set important files")
+        table.add_row("/project set notes <text>", "Set notes")
+        console.print(Panel(table, title="[bold]Project Commands[/bold]", border_style="blue"))
+        return "continue"
+
+    else:
+        console.print(f"[yellow]Unknown project command: {subcommand}[/yellow]")
+        console.print("[dim]Use /project help for available commands[/dim]")
+        return "continue"
+
+
 def display_status_bar():
     """Display the status bar at the bottom of the screen."""
+    global current_project
+
     # Get terminal width
     width = console.width
 
     # Build status components
     model_part = f"[cyan]{session.model}[/cyan]"
+
+    # Project name if available
+    if current_project:
+        project_part = f"[bold magenta]{current_project.name}[/bold magenta]"
+    else:
+        project_part = ""
 
     # Shorten path if too long
     cwd = str(Path.cwd())
@@ -100,15 +512,18 @@ def display_status_bar():
 
     # Connection status
     if session.connected:
-        status_part = "[green]● connected[/green]"
+        status_part = "[green]●[/green]"
     else:
-        status_part = "[red]● disconnected[/red]"
+        status_part = "[red]●[/red]"
 
     # Uptime
     uptime_part = f"[dim]{session.get_uptime()}[/dim]"
 
     # Build the status line
-    parts = [model_part, cwd_part]
+    parts = []
+    if project_part:
+        parts.append(project_part)
+    parts.extend([model_part, cwd_part])
     if tokens_part:
         parts.append(tokens_part)
     parts.append(status_part)
@@ -240,6 +655,7 @@ You have access to a series of tools you can execute. Here are the tools you can
 When you want to use a tool, reply with exactly one line in the format: 'tool: TOOL_NAME({{JSON_ARGS}})' and nothing else.
 Use compact single-line JSON with double quotes. After receiving a tool_result(...) message, continue the task.
 If no tool is needed, respond normally. Use markdown formatting in your responses.
+{project_context}
 """
 
 
@@ -666,7 +1082,15 @@ def get_full_system_prompt():
     for tool_name in TOOL_REGISTRY:
         tool_str_repr += f"{'='*40}\nTOOL\n{'='*40}"
         tool_str_repr += get_tool_str_representation(tool_name)
-    return SYSTEM_PROMPT.format(tool_list_repr=tool_str_repr)
+
+    # Add project context if available
+    project_ctx = get_project_context()
+    if project_ctx:
+        project_ctx = f"\n\n{'='*40}\nPROJECT CONTEXT\n{'='*40}\n{project_ctx}\n"
+    else:
+        project_ctx = ""
+
+    return SYSTEM_PROMPT.format(tool_list_repr=tool_str_repr, project_context=project_ctx)
 
 
 def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
@@ -798,11 +1222,25 @@ def display_assistant_message(text: str):
 
 def display_welcome():
     """Display welcome message."""
+    global current_project
+
     console.print()
+
+    # Build welcome content
+    welcome_lines = ["[bold cyan]aigent[/bold cyan] - AI Coding Assistant\n"]
+
+    # Show project info if detected
+    if current_project:
+        welcome_lines.append(f"[bold magenta]Project:[/bold magenta] {current_project.name}")
+        if current_project.description:
+            welcome_lines.append(f"[dim]{current_project.description}[/dim]")
+        welcome_lines.append("")
+
+    welcome_lines.append("[dim]Commands:[/dim]  [cyan]/help[/cyan] [cyan]/project[/cyan] [cyan]/models[/cyan] [cyan]/tools[/cyan] [cyan]/clear[/cyan] [cyan]/exit[/cyan]")
+    welcome_lines.append("[dim]Shortcuts:[/dim]  [cyan]Tab[/cyan] complete  [cyan]↑↓[/cyan] history  [cyan]Ctrl+C[/cyan] cancel  [cyan]Ctrl+D[/cyan] exit")
+
     console.print(Panel(
-        "[bold cyan]aigent[/bold cyan] - AI Coding Assistant\n\n"
-        "[dim]Commands:[/dim]  [cyan]/help[/cyan] [cyan]/clear[/cyan] [cyan]/models[/cyan] [cyan]/tools[/cyan] [cyan]/exit[/cyan]\n\n"
-        "[dim]Shortcuts:[/dim]  [cyan]Tab[/cyan] complete  [cyan]↑↓[/cyan] history  [cyan]Ctrl+C[/cyan] cancel  [cyan]Ctrl+D[/cyan] exit  [cyan]Ctrl+L[/cyan] clear",
+        "\n".join(welcome_lines),
         title="[bold]Welcome[/bold]",
         border_style="blue"
     ))
@@ -816,10 +1254,10 @@ def display_help():
     cmd_table.add_column("Command", style="cyan")
     cmd_table.add_column("Description")
     cmd_table.add_row("/help", "Show this help message")
-    cmd_table.add_row("/clear", "Clear conversation history")
-    cmd_table.add_row("/model", "Show current model")
+    cmd_table.add_row("/project", "Project management (init, info, memory)")
     cmd_table.add_row("/models", "List available Ollama models")
     cmd_table.add_row("/tools", "List available tools")
+    cmd_table.add_row("/clear", "Clear conversation history")
     cmd_table.add_row("/exit", "Exit the agent")
 
     # Shortcuts table
@@ -978,7 +1416,7 @@ def display_models(base_url: str, current_model: str):
 # =============================================================================
 
 # Available slash commands for completion
-SLASH_COMMANDS = ["/help", "/clear", "/model", "/models", "/tools", "/exit", "/quit"]
+SLASH_COMMANDS = ["/help", "/clear", "/model", "/models", "/tools", "/project", "/exit", "/quit"]
 
 
 class AigentCompleter:
@@ -1202,7 +1640,10 @@ def get_multiline_input() -> Optional[str]:
 
 def handle_slash_command(command: str, model: str, base_url: str) -> Optional[str]:
     """Handle slash commands. Returns None to continue, 'exit' to exit, 'clear' to clear."""
-    cmd = command.lower().strip()
+    cmd_lower = command.lower().strip()
+    cmd_parts = command.strip().split(maxsplit=1)
+    cmd = cmd_parts[0].lower()
+    args = cmd_parts[1] if len(cmd_parts) > 1 else ""
 
     if cmd in ("/exit", "/quit"):
         console.print("[dim]Goodbye![/dim]")
@@ -1222,6 +1663,8 @@ def handle_slash_command(command: str, model: str, base_url: str) -> Optional[st
     elif cmd == "/tools":
         display_tools()
         return "continue"
+    elif cmd == "/project":
+        return handle_project_command(args)
 
     return None  # Not a slash command
 
@@ -1400,7 +1843,7 @@ def run_coding_agent_loop(
     verbose: bool = False
 ):
     """Main agent loop."""
-    global session
+    global session, current_project, project_path
 
     # Initialize session state
     session = SessionState(
@@ -1409,6 +1852,13 @@ def run_coding_agent_loop(
         connected=False,
         start_time=datetime.now()
     )
+
+    # Detect and load project
+    detected_path = detect_project()
+    if detected_path:
+        load_project(detected_path)
+        if verbose and current_project:
+            console.print(f"[dim]Project: {current_project.name}[/dim]")
 
     client = create_client(base_url)
 
