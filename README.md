@@ -14,15 +14,23 @@ AI Coding Assistant powered by Ollama.
 
 ## Installation
 
-### With uv (recommended)
+### Global install (recommended)
 
 ```bash
-uv add git+ssh://git@github.com/robertftenbosch/aigent.git
+# Install as global command
+uv tool install git+ssh://git@github.com/robertftenbosch/aigent.git
+
+# Now use from anywhere
+aigent
 ```
 
-### With pip
+### As project dependency
 
 ```bash
+# With uv
+uv add git+ssh://git@github.com/robertftenbosch/aigent.git
+
+# With pip
 pip install git+ssh://git@github.com/robertftenbosch/aigent.git
 ```
 
