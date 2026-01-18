@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import difflib
 import inspect
 import json
 import os
@@ -2329,6 +2330,102 @@ def is_dangerous_action(tool_name: str, args: Dict[str, Any]) -> Tuple[bool, str
     return False, ""
 
 
+def preview_file_edit(path: str, old_str: str, new_str: str) -> Tuple[bool, str]:
+    """
+    Generate a preview diff for a file edit.
+    Returns (success, diff_text or error_message).
+    """
+    full_path = resolve_abs_path(path)
+
+    # New file creation
+    if old_str == "":
+        preview_lines = [
+            f"[bold green]+ Creating new file: {full_path}[/bold green]",
+            "",
+        ]
+        # Show first 20 lines of new content
+        new_lines = new_str.split('\n')[:20]
+        for line in new_lines:
+            preview_lines.append(f"[green]+ {line}[/green]")
+        if len(new_str.split('\n')) > 20:
+            preview_lines.append(f"[dim]... ({len(new_str.split(chr(10))) - 20} more lines)[/dim]")
+        return True, '\n'.join(preview_lines)
+
+    # Check if file exists
+    if not full_path.exists():
+        return False, f"File not found: {full_path}"
+
+    try:
+        original = full_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return False, f"Error reading file: {e}"
+
+    # Check if old_str exists
+    if original.find(old_str) == -1:
+        return False, f"String not found in file"
+
+    # Generate the edited version
+    edited = original.replace(old_str, new_str, 1)
+
+    # Create unified diff
+    original_lines = original.splitlines(keepends=True)
+    edited_lines = edited.splitlines(keepends=True)
+
+    diff = difflib.unified_diff(
+        original_lines,
+        edited_lines,
+        fromfile=f"a/{full_path.name}",
+        tofile=f"b/{full_path.name}",
+        lineterm=""
+    )
+
+    diff_text = ''.join(diff)
+
+    if not diff_text:
+        return False, "No changes detected"
+
+    return True, diff_text
+
+
+def display_edit_preview(path: str, old_str: str, new_str: str) -> bool:
+    """
+    Display a preview of file changes and ask for confirmation.
+    Returns True if confirmed, False if cancelled.
+    """
+    success, result = preview_file_edit(path, old_str, new_str)
+
+    console.print()
+
+    if not success:
+        console.print(Panel(
+            f"[bold red]Preview Error[/bold red]\n\n{result}",
+            border_style="red"
+        ))
+        return False
+
+    # Display the diff with syntax highlighting
+    console.print(Panel(
+        Syntax(result, "diff", theme="monokai", line_numbers=False),
+        title=f"[bold cyan]📝 File Edit Preview: {path}[/bold cyan]",
+        border_style="cyan",
+        padding=(0, 1)
+    ))
+
+    # Ask for confirmation
+    try:
+        console.print("[bold cyan]Apply changes? [y/N]:[/bold cyan] ", end="")
+        response = input().strip().lower()
+        if response in ('y', 'yes', 'ja', 'j'):
+            console.print("[green]✓ Changes applied[/green]")
+            return True
+        else:
+            console.print("[yellow]✗ Changes discarded[/yellow]")
+            return False
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]✗ Changes discarded[/yellow]")
+        return False
+
+
 def confirm_action(reason: str) -> bool:
     """
     Ask user to confirm a dangerous action.
@@ -2361,6 +2458,14 @@ def execute_tool(name: str, args: Dict[str, Any], skip_confirm: bool = False) ->
     """Execute a tool and return the result."""
     if name not in TOOL_REGISTRY:
         return {"error": f"Unknown tool: {name}"}
+
+    # Show preview for file edits
+    if name == "edit_file" and not skip_confirm:
+        path = args.get("path", "")
+        old_str = args.get("old_str", "")
+        new_str = args.get("new_str", "")
+        if not display_edit_preview(path, old_str, new_str):
+            return {"error": "Edit cancelled by user", "cancelled": True}
 
     # Check if action needs confirmation
     if not skip_confirm:

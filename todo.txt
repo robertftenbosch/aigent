@@ -14,14 +14,17 @@
 [ ] Prompt met context (huidige directory)
 [ ] Input validatie met directe feedback
 
-## Bevestigingen [PARTIAL]
+## Bevestigingen [DONE]
 [x] Confirm dialoog voor destructieve acties
     - delete_file
     - git push
     - git reset
     - run_command (rm, sudo, chmod, kill, etc.)
     - sqlite_execute (DROP, DELETE, TRUNCATE)
-[ ] Preview voor file edits voordat ze worden uitgevoerd
+[x] Preview voor file edits voordat ze worden uitgevoerd
+    - Unified diff weergave met syntax highlighting
+    - Nieuw bestand: toont eerste 20 regels
+    - y/n bevestiging voor toepassen
 
 ## Verbeterde Output [ ]
 [ ] Inklapbare secties voor lange output
