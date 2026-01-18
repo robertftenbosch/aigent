@@ -5,6 +5,7 @@ import json
 import os
 import re
 import readline
+import sqlite3
 import subprocess
 import sys
 import urllib.request
@@ -1037,6 +1038,193 @@ def git_reset_tool(path: str = ".", mode: str = "mixed", target: str = "HEAD") -
     return _run_git_command(["reset", f"--{mode}", target], path)
 
 
+# =============================================================================
+# SQLITE TOOLS
+# =============================================================================
+
+def sqlite_query(database: str, query: str, params: List[Any] = None) -> Dict[str, Any]:
+    """
+    Executes a SELECT query on a SQLite database and returns the results.
+    :param database: Path to the SQLite database file.
+    :param query: The SELECT SQL query to execute.
+    :param params: Optional list of parameters for parameterized queries.
+    :return: Dictionary with columns and rows.
+    """
+    db_path = resolve_abs_path(database)
+    if not db_path.exists():
+        return {"error": f"Database not found: {db_path}"}
+
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+
+        # Get column names
+        columns = [description[0] for description in cursor.description] if cursor.description else []
+
+        # Fetch results (limit to 1000 rows)
+        rows = cursor.fetchmany(1000)
+        results = [dict(row) for row in rows]
+
+        row_count = len(results)
+        has_more = cursor.fetchone() is not None
+
+        conn.close()
+
+        return {
+            "database": str(db_path),
+            "query": query,
+            "columns": columns,
+            "rows": results,
+            "row_count": row_count,
+            "truncated": has_more
+        }
+    except sqlite3.Error as e:
+        return {"error": f"SQLite error: {e}", "query": query}
+    except Exception as e:
+        return {"error": str(e), "query": query}
+
+
+def sqlite_execute(database: str, statement: str, params: List[Any] = None) -> Dict[str, Any]:
+    """
+    Executes an INSERT, UPDATE, DELETE, or CREATE statement on a SQLite database.
+    :param database: Path to the SQLite database file.
+    :param statement: The SQL statement to execute.
+    :param params: Optional list of parameters for parameterized queries.
+    :return: Dictionary with affected rows and last row id.
+    """
+    db_path = resolve_abs_path(database)
+
+    try:
+        # Create parent directory if needed for new databases
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+
+        if params:
+            cursor.execute(statement, params)
+        else:
+            cursor.execute(statement)
+
+        conn.commit()
+
+        result = {
+            "database": str(db_path),
+            "statement": statement,
+            "rows_affected": cursor.rowcount,
+            "last_row_id": cursor.lastrowid
+        }
+
+        conn.close()
+        return result
+    except sqlite3.Error as e:
+        return {"error": f"SQLite error: {e}", "statement": statement}
+    except Exception as e:
+        return {"error": str(e), "statement": statement}
+
+
+def sqlite_tables(database: str) -> Dict[str, Any]:
+    """
+    Lists all tables in a SQLite database.
+    :param database: Path to the SQLite database file.
+    :return: Dictionary with list of table names.
+    """
+    db_path = resolve_abs_path(database)
+    if not db_path.exists():
+        return {"error": f"Database not found: {db_path}"}
+
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        tables = [row[0] for row in cursor.fetchall()]
+
+        conn.close()
+
+        return {
+            "database": str(db_path),
+            "tables": tables,
+            "count": len(tables)
+        }
+    except sqlite3.Error as e:
+        return {"error": f"SQLite error: {e}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def sqlite_schema(database: str, table: str = "") -> Dict[str, Any]:
+    """
+    Shows the schema of a SQLite database or a specific table.
+    :param database: Path to the SQLite database file.
+    :param table: Optional table name. If empty, shows all table schemas.
+    :return: Dictionary with schema information.
+    """
+    db_path = resolve_abs_path(database)
+    if not db_path.exists():
+        return {"error": f"Database not found: {db_path}"}
+
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+
+        if table:
+            # Get schema for specific table
+            cursor.execute(f"PRAGMA table_info({table})")
+            columns = cursor.fetchall()
+
+            if not columns:
+                return {"error": f"Table not found: {table}"}
+
+            schema = {
+                "table": table,
+                "columns": [
+                    {
+                        "name": col[1],
+                        "type": col[2],
+                        "notnull": bool(col[3]),
+                        "default": col[4],
+                        "primary_key": bool(col[5])
+                    }
+                    for col in columns
+                ]
+            }
+
+            # Get indexes
+            cursor.execute(f"PRAGMA index_list({table})")
+            indexes = [{"name": idx[1], "unique": bool(idx[2])} for idx in cursor.fetchall()]
+            schema["indexes"] = indexes
+
+        else:
+            # Get all table schemas
+            cursor.execute("SELECT name, sql FROM sqlite_master WHERE type='table' ORDER BY name")
+            tables = cursor.fetchall()
+
+            schema = {
+                "tables": [
+                    {"name": t[0], "sql": t[1]}
+                    for t in tables
+                ]
+            }
+
+        conn.close()
+
+        return {
+            "database": str(db_path),
+            "schema": schema
+        }
+    except sqlite3.Error as e:
+        return {"error": f"SQLite error: {e}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 TOOL_REGISTRY = {
     # File tools
     "read_file": read_file_tool,
@@ -1061,6 +1249,11 @@ TOOL_REGISTRY = {
     "git_push": git_push_tool,
     "git_stash": git_stash_tool,
     "git_reset": git_reset_tool,
+    # SQLite tools
+    "sqlite_query": sqlite_query,
+    "sqlite_execute": sqlite_execute,
+    "sqlite_tables": sqlite_tables,
+    "sqlite_schema": sqlite_schema,
 }
 
 
@@ -1201,6 +1394,96 @@ def display_tool_result(result: Dict[str, Any], name: str):
             console.print(Panel(
                 Syntax(output_text, "bash", theme="monokai", line_numbers=False) if output_parts else Text.from_markup(output),
                 title=f"[bold green]$ {cmd}[/bold green] [dim](exit: [{rc_style}]{rc}[/{rc_style}])[/dim]",
+                border_style="green"
+            ))
+    elif name.startswith("sqlite_"):
+        # SQLite result display
+        if result.get("error"):
+            console.print(Panel(
+                f"[red]{result['error']}[/red]",
+                title="[bold red]SQLite Error[/bold red]",
+                border_style="red"
+            ))
+        elif name == "sqlite_query" and "rows" in result:
+            # Display query results as table
+            columns = result.get("columns", [])
+            rows = result.get("rows", [])
+
+            if rows:
+                table = Table(show_header=True, header_style="bold magenta", show_lines=True)
+                for col in columns:
+                    table.add_column(col, style="cyan")
+
+                for row in rows[:50]:  # Limit display to 50 rows
+                    table.add_row(*[str(row.get(col, "")) for col in columns])
+
+                title = f"[bold green]Query Results[/bold green] [dim]({result.get('row_count', 0)} rows"
+                if result.get("truncated"):
+                    title += ", truncated"
+                title += ")[/dim]"
+
+                console.print(Panel(table, title=title, border_style="green"))
+            else:
+                console.print(Panel("[dim]No results[/dim]", title="[bold green]Query Results[/bold green]", border_style="green"))
+
+        elif name == "sqlite_tables" and "tables" in result:
+            # Display table list
+            tables = result.get("tables", [])
+            if tables:
+                table = Table(show_header=True, header_style="bold magenta")
+                table.add_column("Table Name", style="cyan")
+                for t in tables:
+                    table.add_row(t)
+                console.print(Panel(table, title=f"[bold green]Tables ({len(tables)})[/bold green]", border_style="green"))
+            else:
+                console.print(Panel("[dim]No tables found[/dim]", title="[bold green]Tables[/bold green]", border_style="green"))
+
+        elif name == "sqlite_schema" and "schema" in result:
+            # Display schema info
+            schema = result.get("schema", {})
+
+            if "columns" in schema:
+                # Single table schema
+                table = Table(show_header=True, header_style="bold magenta")
+                table.add_column("Column", style="cyan")
+                table.add_column("Type", style="yellow")
+                table.add_column("Not Null", style="green")
+                table.add_column("PK", style="red")
+                table.add_column("Default", style="dim")
+
+                for col in schema["columns"]:
+                    table.add_row(
+                        col["name"],
+                        col["type"],
+                        "✓" if col["notnull"] else "",
+                        "✓" if col["primary_key"] else "",
+                        str(col["default"]) if col["default"] else ""
+                    )
+
+                console.print(Panel(table, title=f"[bold green]Schema: {schema.get('table', '')}[/bold green]", border_style="green"))
+
+            elif "tables" in schema:
+                # All tables schema
+                for tbl in schema["tables"]:
+                    console.print(Panel(
+                        Syntax(tbl["sql"], "sql", theme="monokai"),
+                        title=f"[bold green]{tbl['name']}[/bold green]",
+                        border_style="green"
+                    ))
+
+        elif name == "sqlite_execute":
+            # Display execute result
+            info = f"Rows affected: [cyan]{result.get('rows_affected', 0)}[/cyan]"
+            if result.get("last_row_id"):
+                info += f"\nLast row ID: [cyan]{result['last_row_id']}[/cyan]"
+            console.print(Panel(info, title="[bold green]Execute Result[/bold green]", border_style="green"))
+
+        else:
+            # Fallback for other sqlite results
+            result_text = json.dumps(result, indent=2)
+            console.print(Panel(
+                Syntax(result_text, "json", theme="monokai"),
+                title="[bold green]SQLite Result[/bold green]",
                 border_style="green"
             ))
     else:

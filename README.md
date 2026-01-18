@@ -140,6 +140,15 @@ End your input with `;;` on a new line for multi-line prompts.
 | `git_stash` | Stash changes |
 | `git_reset` | Reset HEAD |
 
+### SQLite
+
+| Tool | Description |
+|------|-------------|
+| `sqlite_query` | Execute SELECT query and return results |
+| `sqlite_execute` | Execute INSERT/UPDATE/DELETE/CREATE statements |
+| `sqlite_tables` | List all tables in a database |
+| `sqlite_schema` | Show schema of database or table |
+
 ## Environment Variables
 
 | Variable | Description |
