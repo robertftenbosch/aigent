@@ -380,6 +380,345 @@ def handle_config_command(args: str) -> str:
 
 
 # =============================================================================
+# SESSION MANAGEMENT
+# =============================================================================
+
+SESSIONS_DIR = Path.home() / ".aigent_sessions"
+
+# Token estimation (rough approximation: 4 chars ≈ 1 token)
+def estimate_tokens(text: str) -> int:
+    """Estimate token count for text."""
+    return len(text) // 4
+
+
+def get_session_path(session_name: str) -> Path:
+    """Get path for a session file."""
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    return SESSIONS_DIR / f"{session_name}.json"
+
+
+def list_sessions() -> List[Dict[str, Any]]:
+    """List all saved sessions."""
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    sessions = []
+
+    for file in sorted(SESSIONS_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
+        try:
+            with open(file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            sessions.append({
+                "name": file.stem,
+                "model": data.get("model", "unknown"),
+                "messages": len(data.get("conversation", [])),
+                "saved_at": data.get("saved_at", "unknown"),
+                "path": str(file)
+            })
+        except Exception:
+            continue
+
+    return sessions
+
+
+def save_session(
+    session_name: str,
+    conversation: List[Dict[str, str]],
+    model: str
+) -> Dict[str, Any]:
+    """Save current session to file."""
+    session_path = get_session_path(session_name)
+
+    data = {
+        "name": session_name,
+        "model": model,
+        "saved_at": datetime.now().isoformat(),
+        "conversation": conversation,
+        "token_estimate": sum(estimate_tokens(m.get("content", "")) for m in conversation)
+    }
+
+    try:
+        with open(session_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return {"success": True, "path": str(session_path), "messages": len(conversation)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def load_session(session_name: str) -> Dict[str, Any]:
+    """Load a saved session."""
+    session_path = get_session_path(session_name)
+
+    if not session_path.exists():
+        return {"error": f"Session not found: {session_name}"}
+
+    try:
+        with open(session_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {
+            "success": True,
+            "conversation": data.get("conversation", []),
+            "model": data.get("model", ""),
+            "saved_at": data.get("saved_at", "")
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def delete_session(session_name: str) -> Dict[str, Any]:
+    """Delete a saved session."""
+    session_path = get_session_path(session_name)
+
+    if not session_path.exists():
+        return {"error": f"Session not found: {session_name}"}
+
+    try:
+        session_path.unlink()
+        return {"success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def export_to_markdown(
+    conversation: List[Dict[str, str]],
+    output_path: str,
+    title: str = "Aigent Conversation"
+) -> Dict[str, Any]:
+    """Export conversation to markdown file."""
+    lines = [
+        f"# {title}",
+        "",
+        f"*Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+        "",
+        "---",
+        ""
+    ]
+
+    for msg in conversation:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+
+        if role == "system":
+            continue  # Skip system messages
+        elif role == "user":
+            lines.append("## 👤 User")
+            lines.append("")
+            lines.append(content)
+            lines.append("")
+        elif role == "assistant":
+            lines.append("## 🤖 Assistant")
+            lines.append("")
+            lines.append(content)
+            lines.append("")
+
+        lines.append("---")
+        lines.append("")
+
+    try:
+        output = Path(output_path).expanduser()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("\n".join(lines), encoding="utf-8")
+        return {"success": True, "path": str(output), "messages": len(conversation) - 1}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def summarize_conversation(
+    client,
+    model: str,
+    conversation: List[Dict[str, str]],
+    max_tokens: int = 500
+) -> str:
+    """Summarize a conversation to reduce context size."""
+    # Extract the content to summarize (skip system prompt)
+    messages_to_summarize = [m for m in conversation if m.get("role") != "system"]
+
+    if len(messages_to_summarize) < 4:
+        return ""  # Not enough to summarize
+
+    # Build summary prompt
+    summary_prompt = """Summarize the following conversation concisely, preserving key information, decisions made, code discussed, and any important context. Focus on facts and technical details.
+
+Conversation:
+"""
+    for msg in messages_to_summarize[:-2]:  # Keep last 2 messages intact
+        role = msg.get("role", "")
+        content = msg.get("content", "")[:1000]  # Truncate long messages
+        summary_prompt += f"\n{role}: {content}\n"
+
+    summary_prompt += "\n\nProvide a concise summary:"
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": summary_prompt}],
+            max_tokens=max_tokens
+        )
+        return response.choices[0].message.content
+    except Exception:
+        return ""
+
+
+def auto_summarize_if_needed(
+    client,
+    model: str,
+    conversation: List[Dict[str, str]],
+    threshold: int = 30000
+) -> List[Dict[str, str]]:
+    """Auto-summarize conversation if it exceeds token threshold."""
+    total_tokens = sum(estimate_tokens(m.get("content", "")) for m in conversation)
+
+    if total_tokens < threshold:
+        return conversation  # No summarization needed
+
+    console.print(f"[yellow]⚡ Context length ({total_tokens:,} tokens) exceeds threshold. Summarizing...[/yellow]")
+
+    # Get the system prompt
+    system_msg = conversation[0] if conversation and conversation[0].get("role") == "system" else None
+
+    # Summarize older messages
+    summary = summarize_conversation(client, model, conversation)
+
+    if not summary:
+        return conversation  # Summarization failed, keep original
+
+    # Build new conversation with summary
+    new_conversation = []
+
+    if system_msg:
+        new_conversation.append(system_msg)
+
+    # Add summary as context
+    new_conversation.append({
+        "role": "assistant",
+        "content": f"[Previous conversation summary]\n{summary}\n[End of summary]"
+    })
+
+    # Keep last few messages intact
+    new_conversation.extend(conversation[-4:])
+
+    new_tokens = sum(estimate_tokens(m.get("content", "")) for m in new_conversation)
+    console.print(f"[green]✓[/green] Summarized: {total_tokens:,} → {new_tokens:,} tokens")
+
+    return new_conversation
+
+
+def display_sessions():
+    """Display saved sessions."""
+    sessions = list_sessions()
+
+    if not sessions:
+        console.print("[dim]No saved sessions found.[/dim]")
+        console.print("[dim]Save with: /session save <name>[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold cyan", title="Saved Sessions")
+    table.add_column("Name", style="cyan")
+    table.add_column("Model", style="green")
+    table.add_column("Messages", justify="right")
+    table.add_column("Saved", style="dim")
+
+    for s in sessions[:20]:  # Show max 20
+        saved_at = s.get("saved_at", "")
+        if saved_at and saved_at != "unknown":
+            try:
+                dt = datetime.fromisoformat(saved_at)
+                saved_at = dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                pass
+        table.add_row(s["name"], s["model"], str(s["messages"]), saved_at)
+
+    console.print(Panel(table, border_style="blue"))
+
+
+def handle_session_command(args: str, conversation: List[Dict[str, str]], model: str) -> Tuple[str, Optional[List[Dict[str, str]]]]:
+    """
+    Handle /session commands.
+    Returns (action, new_conversation) where new_conversation is set if loading a session.
+    """
+    parts = args.strip().split(maxsplit=1)
+    subcmd = parts[0].lower() if parts else ""
+    subargs = parts[1] if len(parts) > 1 else ""
+
+    if subcmd == "" or subcmd == "list":
+        display_sessions()
+        return "continue", None
+
+    elif subcmd == "save":
+        if not subargs:
+            # Generate default name
+            subargs = datetime.now().strftime("session_%Y%m%d_%H%M%S")
+
+        result = save_session(subargs, conversation, model)
+        if result.get("success"):
+            console.print(f"[green]✓[/green] Session saved: [cyan]{subargs}[/cyan]")
+            console.print(f"[dim]{result.get('messages')} messages saved to {result.get('path')}[/dim]")
+        else:
+            console.print(f"[red]✗[/red] Error: {result.get('error')}")
+        return "continue", None
+
+    elif subcmd == "load":
+        if not subargs:
+            console.print("[yellow]Usage: /session load <name>[/yellow]")
+            display_sessions()
+            return "continue", None
+
+        result = load_session(subargs)
+        if result.get("success"):
+            console.print(f"[green]✓[/green] Session loaded: [cyan]{subargs}[/cyan]")
+            console.print(f"[dim]Model: {result.get('model')} | Saved: {result.get('saved_at')}[/dim]")
+            return "loaded", result.get("conversation")
+        else:
+            console.print(f"[red]✗[/red] Error: {result.get('error')}")
+        return "continue", None
+
+    elif subcmd == "delete":
+        if not subargs:
+            console.print("[yellow]Usage: /session delete <name>[/yellow]")
+            return "continue", None
+
+        result = delete_session(subargs)
+        if result.get("success"):
+            console.print(f"[green]✓[/green] Session deleted: [cyan]{subargs}[/cyan]")
+        else:
+            console.print(f"[red]✗[/red] Error: {result.get('error')}")
+        return "continue", None
+
+    elif subcmd == "export":
+        if not subargs:
+            subargs = f"conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+
+        result = export_to_markdown(conversation, subargs)
+        if result.get("success"):
+            console.print(f"[green]✓[/green] Exported to: [cyan]{result.get('path')}[/cyan]")
+        else:
+            console.print(f"[red]✗[/red] Error: {result.get('error')}")
+        return "continue", None
+
+    elif subcmd == "help":
+        help_text = """
+[bold]Session Commands:[/bold]
+
+  /session              List saved sessions
+  /session save [name]  Save current session
+  /session load <name>  Load a saved session
+  /session delete <name> Delete a session
+  /session export [file] Export to markdown
+
+[bold]Examples:[/bold]
+
+  /session save myproject
+  /session load myproject
+  /session export ~/notes/chat.md
+"""
+        console.print(Panel(help_text.strip(), title="[bold]Session Help[/bold]", border_style="blue"))
+        return "continue", None
+
+    else:
+        console.print(f"[yellow]Unknown session command: {subcmd}[/yellow]")
+        console.print("[dim]Use /session help for available commands[/dim]")
+        return "continue", None
+
+
+# =============================================================================
 # PROJECT MANAGEMENT
 # =============================================================================
 
@@ -2519,6 +2858,7 @@ def display_help():
     cmd_table.add_row("/model", "Show current model")
     cmd_table.add_row("/model <name>", "Switch to a different model")
     cmd_table.add_row("/models", "List available Ollama models")
+    cmd_table.add_row("/session", "Session management (save, load, export)")
     cmd_table.add_row("/project", "Project management (init, info, memory)")
     cmd_table.add_row("/tools", "List available tools")
     cmd_table.add_row("/clear", "Clear conversation history")
@@ -2680,7 +3020,7 @@ def display_models(base_url: str, current_model: str):
 # =============================================================================
 
 # Available slash commands for completion
-SLASH_COMMANDS = ["/help", "/clear", "/config", "/model", "/models", "/tools", "/project", "/exit", "/quit"]
+SLASH_COMMANDS = ["/help", "/clear", "/config", "/model", "/models", "/session", "/tools", "/project", "/exit", "/quit"]
 
 
 class AigentCompleter:
@@ -3467,6 +3807,21 @@ def run_coding_agent_loop(
 
             # Handle slash commands
             if user_input.startswith("/"):
+                # Handle session commands separately (they need conversation access)
+                cmd_parts = user_input.strip().split(maxsplit=1)
+                cmd = cmd_parts[0].lower()
+                args = cmd_parts[1] if len(cmd_parts) > 1 else ""
+
+                if cmd == "/session":
+                    action, new_conv = handle_session_command(args, conversation, model)
+                    if action == "loaded" and new_conv:
+                        conversation = new_conv
+                        # Ensure system prompt is at the start
+                        if not conversation or conversation[0].get("role") != "system":
+                            conversation.insert(0, {"role": "system", "content": get_full_system_prompt()})
+                        display_status_bar()
+                    continue
+
                 result, new_model = handle_slash_command(user_input, model, base_url)
                 if new_model:
                     model = new_model
@@ -3482,6 +3837,10 @@ def run_coding_agent_loop(
                     continue
 
             conversation.append({"role": "user", "content": user_input})
+
+            # Auto-summarize if conversation is too long
+            conversation = auto_summarize_if_needed(client, model, conversation, config.token_warning_threshold)
+
             process_agent_turn(client, model, base_url, conversation, stream, verbose)
             display_status_bar()
 

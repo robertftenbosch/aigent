@@ -97,6 +97,7 @@ aigent -v
 | `/config` | Show/edit configuration |
 | `/model` | Show or switch model |
 | `/models` | List available models |
+| `/session` | Session management |
 | `/project` | Project management |
 | `/tools` | List available tools |
 | `/clear` | Clear conversation |
@@ -211,6 +212,20 @@ Create a config file with `/config init` or manually at `~/.aigentrc`:
 /config set key val  # Change a setting
 /config reload       # Reload from file
 ```
+
+### Session Commands
+
+```bash
+/session              # List saved sessions
+/session save [name]  # Save current session
+/session load <name>  # Load a saved session
+/session delete <name> # Delete a session
+/session export [file] # Export to markdown
+```
+
+Sessions are saved in `~/.aigent_sessions/`.
+
+**Auto-summarization:** When conversation exceeds the token threshold (default: 50,000), older messages are automatically summarized to reduce context size.
 
 ## Environment Variables
 

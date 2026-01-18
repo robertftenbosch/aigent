@@ -71,10 +71,20 @@
 
 ## Toekomstige Ideeën
 
-### Session Management
-[ ] Session save/restore
-[ ] Export conversatie naar markdown
-[ ] Context window management (auto-summarize bij lange conversaties)
+### Session Management [DONE]
+[x] Session save/restore
+    - /session save [name]
+    - /session load <name>
+    - /session list
+    - /session delete <name>
+    - Opgeslagen in ~/.aigent_sessions/
+[x] Export conversatie naar markdown
+    - /session export [file]
+    - Formatteert als leesbaar markdown
+[x] Context window management (auto-summarize bij lange conversaties)
+    - Automatisch samenvatten bij token_warning_threshold (default 50k)
+    - Houdt laatste 4 berichten intact
+    - Toont progress indicator
 
 ### Functionaliteit
 [x] Image support (voor vision models zoals llava)
