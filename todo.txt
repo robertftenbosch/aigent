@@ -1,0 +1,47 @@
+# aigent UX/UI Roadmap
+# =====================
+
+## Status Bar [DONE]
+[x] Model naam weergeven
+[x] Werkdirectory weergeven
+[x] Token telling
+[x] Connectie status
+[x] Uptime
+
+## Betere Input Ervaring [ ]
+[ ] Tab-completion voor /commands
+[ ] Tab-completion voor bestandspaden
+[ ] Prompt met context (huidige directory)
+[ ] Input validatie met directe feedback
+
+## Bevestigingen [ ]
+[ ] Confirm dialoog voor destructieve acties
+    - delete_file
+    - git push
+    - git reset
+    - run_command (gevaarlijke commands)
+[ ] Preview voor file edits voordat ze worden uitgevoerd
+
+## Verbeterde Output [ ]
+[ ] Inklapbare secties voor lange output
+[ ] Tijdstempels bij responses
+[ ] Token/cost tracking weergave per request
+[ ] "Copy" indicator bij code blocks
+
+## Animaties & Feedback [ ]
+[ ] Betere typing indicator tijdens streaming
+[ ] Succes/error geluid (optioneel, configureerbaar)
+[ ] Kleurthema's (dark/light/custom)
+[ ] Configuratie bestand voor themes
+
+## Keyboard Shortcuts [ ]
+[x] ↑/↓ history navigatie (al werkend via readline)
+[ ] Ctrl+C graceful cancel met cleanup
+[ ] Ctrl+L clear screen
+[ ] Ctrl+D exit
+
+## Toekomstige Ideeën
+[ ] Session save/restore
+[ ] Export conversatie naar markdown
+[ ] Plugin systeem voor custom tools
+[ ] Web UI optie
