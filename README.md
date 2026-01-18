@@ -56,7 +56,7 @@ uv sync  # or: pip install -e .
 1. Install [Ollama](https://ollama.ai)
 2. Pull a model:
    ```bash
-   ollama pull llama3
+   ollama pull nemotron-3-nano
    ```
 3. Start Ollama:
    ```bash
@@ -83,7 +83,7 @@ aigent -v
 
 | Option | Description |
 |--------|-------------|
-| `-m, --model` | Model to use (default: llama3) |
+| `-m, --model` | Model to use (default: nemotron-3-nano) |
 | `-u, --url` | Ollama API URL (default: http://localhost:11434/v1) |
 | `-c, --command` | Execute single command and exit |
 | `--no-stream` | Disable streaming output |

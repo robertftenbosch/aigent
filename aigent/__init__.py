@@ -782,7 +782,7 @@ def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 def run_coding_agent_loop(
-    model: str = "llama3",
+    model: str = "nemotron-3-nano",
     base_url: str = "http://localhost:11434/v1",
     stream: bool = True,
     single_command: Optional[str] = None,
@@ -895,8 +895,8 @@ Examples:
 
     parser.add_argument(
         "-m", "--model",
-        default=os.environ.get("OLLAMA_MODEL", "llama3"),
-        help="Model to use (default: llama3 or OLLAMA_MODEL env var)"
+        default=os.environ.get("OLLAMA_MODEL", "nemotron-3-nano"),
+        help="Model to use (default: nemotron-3-nano or OLLAMA_MODEL env var)"
     )
 
     parser.add_argument(
