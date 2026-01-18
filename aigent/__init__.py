@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import argparse
+import base64
 import difflib
 import inspect
 import json
+import mimetypes
 import os
 import re
 import readline
@@ -13,7 +15,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional, Union
 
 from openai import OpenAI, APIConnectionError, APIStatusError
 from dotenv import load_dotenv
@@ -1540,6 +1542,174 @@ def pypi_info(package: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+# =============================================================================
+# IMAGE TOOLS
+# =============================================================================
+
+# Default vision model to use when current model doesn't support vision
+DEFAULT_VISION_MODEL = os.environ.get("AIGENT_VISION_MODEL", "llava")
+
+# Image extensions supported
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+
+
+def encode_image_to_base64(image_path: Path) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Encode an image file to base64.
+    Returns (base64_data, mime_type) or (None, error_message).
+    """
+    if not image_path.exists():
+        return None, f"Image not found: {image_path}"
+
+    if image_path.suffix.lower() not in IMAGE_EXTENSIONS:
+        return None, f"Unsupported image format: {image_path.suffix}"
+
+    # Determine MIME type
+    mime_type, _ = mimetypes.guess_type(str(image_path))
+    if not mime_type:
+        mime_type = "image/jpeg"  # fallback
+
+    try:
+        with open(image_path, "rb") as f:
+            image_data = base64.b64encode(f.read()).decode("utf-8")
+        return image_data, mime_type
+    except Exception as e:
+        return None, f"Error reading image: {e}"
+
+
+def check_model_has_vision(model_name: str, base_url: str) -> bool:
+    """
+    Check if a model has vision capabilities.
+    """
+    try:
+        models = fetch_ollama_models(base_url)
+        if not models:
+            return False
+
+        for model in models:
+            name = model.get("name", "")
+            if name == model_name or name.split(":")[0] == model_name:
+                details = model.get("details", {})
+                families = details.get("families", [])
+                # Check for vision-related families
+                if any(fam in ["clip", "vision", "llava"] for fam in families):
+                    return True
+                # Check model name for vision indicators
+                if any(v in name.lower() for v in ["llava", "vision", "bakllava", "moondream"]):
+                    return True
+        return False
+    except Exception:
+        return False
+
+
+def call_vision_model(
+    image_path: str,
+    prompt: str,
+    vision_model: str,
+    base_url: str
+) -> Dict[str, Any]:
+    """
+    Call a vision model to analyze an image.
+    """
+    full_path = resolve_abs_path(image_path)
+
+    # Encode image
+    image_data, result = encode_image_to_base64(full_path)
+    if image_data is None:
+        return {"error": result}
+
+    mime_type = result
+
+    try:
+        client = OpenAI(base_url=base_url, api_key="ollama")
+
+        # Create message with image
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{image_data}"
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": prompt
+                    }
+                ]
+            }
+        ]
+
+        response = client.chat.completions.create(
+            model=vision_model,
+            messages=messages,
+            max_tokens=1000
+        )
+
+        return {
+            "description": response.choices[0].message.content,
+            "model_used": vision_model,
+            "image_path": str(full_path)
+        }
+
+    except Exception as e:
+        return {"error": f"Vision model error: {e}"}
+
+
+def analyze_image(
+    image_path: str,
+    prompt: str = "Describe this image in detail. What do you see?",
+    vision_model: str = ""
+) -> Dict[str, Any]:
+    """
+    Analyze an image using a vision model.
+    If the current model supports vision, it will be used directly.
+    Otherwise, a dedicated vision model (default: llava) will be used.
+    :param image_path: Path to the image file.
+    :param prompt: The question or instruction for image analysis.
+    :param vision_model: Optional specific vision model to use.
+    :return: Dictionary with image analysis result.
+    """
+    global session
+
+    full_path = resolve_abs_path(image_path)
+
+    # Validate image exists
+    if not full_path.exists():
+        return {"error": f"Image not found: {full_path}"}
+
+    if full_path.suffix.lower() not in IMAGE_EXTENSIONS:
+        return {"error": f"Unsupported image format: {full_path.suffix}. Supported: {', '.join(IMAGE_EXTENSIONS)}"}
+
+    # Determine which vision model to use
+    base_url = session.base_url if session else "http://localhost:11434/v1"
+    current_model = session.model if session else "nemotron-3-nano"
+
+    # Check if current model has vision
+    current_has_vision = check_model_has_vision(current_model, base_url)
+
+    if current_has_vision:
+        # Use current model directly
+        model_to_use = current_model
+        using_agent = False
+    else:
+        # Use specified vision model or default
+        model_to_use = vision_model if vision_model else DEFAULT_VISION_MODEL
+        using_agent = True
+
+    # Call the vision model
+    result = call_vision_model(image_path, prompt, model_to_use, base_url)
+
+    if "error" not in result:
+        result["using_vision_agent"] = using_agent
+        if using_agent:
+            result["note"] = f"Used vision agent ({model_to_use}) because {current_model} doesn't support vision"
+
+    return result
+
+
 TOOL_REGISTRY = {
     # File tools
     "read_file": read_file_tool,
@@ -1577,6 +1747,8 @@ TOOL_REGISTRY = {
     "pip_show": pip_show,
     "pip_check": pip_check,
     "pypi_info": pypi_info,
+    # Image tools
+    "analyze_image": analyze_image,
 }
 
 
@@ -1878,6 +2050,37 @@ def display_tool_result(result: Dict[str, Any], name: str):
             console.print(Panel(
                 Syntax(result_text, "json", theme="monokai"),
                 title="[bold green]SQLite Result[/bold green]",
+                border_style="green"
+            ))
+    elif name == "analyze_image":
+        # Image analysis result display
+        if result.get("error"):
+            console.print(Panel(
+                f"[red]{result['error']}[/red]",
+                title="[bold red]Image Analysis Error[/bold red]",
+                border_style="red"
+            ))
+        else:
+            description = result.get("description", "No description")
+            model_used = result.get("model_used", "unknown")
+            image_path = result.get("image_path", "")
+            using_agent = result.get("using_vision_agent", False)
+
+            # Build info text
+            info_parts = [
+                f"[bold]Image:[/bold] {image_path}",
+                f"[bold]Model:[/bold] {model_used}" + (" [dim](vision agent)[/dim]" if using_agent else ""),
+            ]
+            if result.get("note"):
+                info_parts.append(f"[dim]{result['note']}[/dim]")
+
+            info_parts.append("")
+            info_parts.append("[bold]Description:[/bold]")
+            info_parts.append(description)
+
+            console.print(Panel(
+                "\n".join(info_parts),
+                title="[bold green]🖼 Image Analysis[/bold green]",
                 border_style="green"
             ))
     else:

@@ -165,12 +165,25 @@ End your input with `;;` on a new line for multi-line prompts.
 | `pip_check` | Check for broken dependencies |
 | `pypi_info` | Get package info from PyPI (online) |
 
+### Image Analysis
+
+| Tool | Description |
+|------|-------------|
+| `analyze_image` | Analyze image using vision model |
+
+**Vision Model Support:**
+- If current model has vision (e.g., llava, bakllava), it's used directly
+- Otherwise, a dedicated vision model is used as an agent
+- Default vision model: `llava` (configurable via `AIGENT_VISION_MODEL`)
+
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
 | `OLLAMA_MODEL` | Default model to use |
 | `OLLAMA_BASE_URL` | Ollama API base URL |
+| `AIGENT_VISION_MODEL` | Vision model for image analysis (default: llava) |
+| `AIGENT_SOUNDS` | Enable sounds: 1=on, 0=off (default: 0) |
 
 ## License
 

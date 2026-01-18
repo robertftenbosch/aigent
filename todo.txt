@@ -77,7 +77,10 @@
 [ ] Context window management (auto-summarize bij lange conversaties)
 
 ### Functionaliteit
-[ ] Image support (voor vision models zoals llava)
+[x] Image support (voor vision models zoals llava)
+    - analyze_image tool
+    - Automatische vision agent als model geen vision heeft
+    - Configureerbaar via AIGENT_VISION_MODEL
 [x] Web search tool (DuckDuckGo)
 [x] URL fetch tool
 [x] Python package tools (pip_list, pip_show, pip_check, pypi_info)
