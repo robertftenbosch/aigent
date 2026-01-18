@@ -14,28 +14,24 @@ AI Coding Assistant powered by Ollama.
 
 ## Installation
 
-### From source (with uv)
+### With uv (recommended)
+
+```bash
+uv add git+ssh://git@github.com/robertftenbosch/aigent.git
+```
+
+### With pip
+
+```bash
+pip install git+ssh://git@github.com/robertftenbosch/aigent.git
+```
+
+### From source
 
 ```bash
 git clone https://github.com/robertftenbosch/aigent.git
 cd aigent
-uv sync
-```
-
-### From source (with pip)
-
-```bash
-git clone https://github.com/robertftenbosch/aigent.git
-cd aigent
-pip install -e .
-```
-
-### From PyPI (coming soon)
-
-```bash
-pip install aigent
-# or
-uv add aigent
+uv sync  # or: pip install -e .
 ```
 
 ## Prerequisites
