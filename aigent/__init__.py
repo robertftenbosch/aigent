@@ -2261,10 +2261,113 @@ def execute_llm_call(client: OpenAI, model: str, conversation: List[Dict[str, st
         return None
 
 
-def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+# =============================================================================
+# CONFIRMATION DIALOGS
+# =============================================================================
+
+# Tools that always require confirmation
+DANGEROUS_TOOLS = {
+    "delete_file",
+    "git_push",
+    "git_reset",
+}
+
+# Dangerous command patterns for run_command
+DANGEROUS_COMMAND_PATTERNS = [
+    r'\brm\b',           # rm command
+    r'\brm\s+-rf?\b',    # rm -r or rm -rf
+    r'\bsudo\b',         # sudo
+    r'\bchmod\b',        # chmod
+    r'\bchown\b',        # chown
+    r'\bmkfs\b',         # mkfs (format disk)
+    r'\bdd\b',           # dd command
+    r'\b>\s*/',          # redirect to root
+    r'\bkill\b',         # kill process
+    r'\bpkill\b',        # pkill
+    r'\breboot\b',       # reboot
+    r'\bshutdown\b',     # shutdown
+    r'\bdropdb\b',       # drop database
+    r'\bDROP\s+DATABASE\b',  # SQL drop database
+    r'\bDROP\s+TABLE\b',     # SQL drop table
+    r'\bTRUNCATE\b',         # SQL truncate
+    r'\bDELETE\s+FROM\b',    # SQL delete
+]
+
+
+def is_dangerous_action(tool_name: str, args: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Check if a tool action is dangerous and needs confirmation.
+    Returns (is_dangerous, reason).
+    """
+    # Check dangerous tools
+    if tool_name in DANGEROUS_TOOLS:
+        if tool_name == "delete_file":
+            path = args.get("path", "unknown")
+            return True, f"Delete file/directory: {path}"
+        elif tool_name == "git_push":
+            remote = args.get("remote", "origin")
+            branch = args.get("branch", "current branch")
+            return True, f"Push to {remote}/{branch}"
+        elif tool_name == "git_reset":
+            mode = args.get("mode", "mixed")
+            target = args.get("target", "HEAD")
+            return True, f"Git reset --{mode} {target}"
+
+    # Check run_command for dangerous patterns
+    if tool_name == "run_command":
+        command = args.get("command", "")
+        for pattern in DANGEROUS_COMMAND_PATTERNS:
+            if re.search(pattern, command, re.IGNORECASE):
+                return True, f"Potentially dangerous command: {command}"
+
+    # Check sqlite_execute for destructive SQL
+    if tool_name == "sqlite_execute":
+        statement = args.get("statement", "").upper()
+        if any(kw in statement for kw in ["DROP", "DELETE", "TRUNCATE"]):
+            return True, f"Destructive SQL: {args.get('statement', '')[:50]}"
+
+    return False, ""
+
+
+def confirm_action(reason: str) -> bool:
+    """
+    Ask user to confirm a dangerous action.
+    Returns True if confirmed, False if cancelled.
+    """
+    console.print()
+    console.print(Panel(
+        f"[bold yellow]⚠ Confirmation Required[/bold yellow]\n\n"
+        f"{reason}\n\n"
+        f"[dim]Press [bold]y[/bold] to confirm, [bold]n[/bold] to cancel[/dim]",
+        border_style="yellow",
+        padding=(0, 2)
+    ))
+
+    try:
+        console.print("[bold yellow]Confirm? [y/N]:[/bold yellow] ", end="")
+        response = input().strip().lower()
+        if response in ('y', 'yes', 'ja', 'j'):
+            console.print("[green]✓ Confirmed[/green]")
+            return True
+        else:
+            console.print("[red]✗ Cancelled[/red]")
+            return False
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[red]✗ Cancelled[/red]")
+        return False
+
+
+def execute_tool(name: str, args: Dict[str, Any], skip_confirm: bool = False) -> Dict[str, Any]:
     """Execute a tool and return the result."""
     if name not in TOOL_REGISTRY:
         return {"error": f"Unknown tool: {name}"}
+
+    # Check if action needs confirmation
+    if not skip_confirm:
+        is_dangerous, reason = is_dangerous_action(name, args)
+        if is_dangerous:
+            if not confirm_action(reason):
+                return {"error": "Action cancelled by user", "cancelled": True}
 
     tool = TOOL_REGISTRY[name]
     try:
