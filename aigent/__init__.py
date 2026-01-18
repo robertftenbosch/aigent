@@ -1623,14 +1623,10 @@ def display_tool_result(result: Dict[str, Any], name: str):
 
 
 def display_assistant_message(text: str):
-    """Display assistant message with markdown formatting."""
+    """Display assistant message in conversational style."""
     console.print()
-    console.print(Panel(
-        Markdown(text),
-        title="[bold yellow]Assistant[/bold yellow]",
-        border_style="yellow",
-        padding=(1, 2)
-    ))
+    console.print("[bold cyan]aigent:[/bold cyan]")
+    console.print(Markdown(text))
     console.print()
 
 
