@@ -1781,6 +1781,51 @@ def get_full_system_prompt():
     return SYSTEM_PROMPT.format(tool_list_repr=tool_str_repr, project_context=project_ctx)
 
 
+def parse_positional_args(args_str: str) -> List[str]:
+    """
+    Parse comma-separated positional arguments, handling quoted strings.
+    Example: "'arg1', 'arg2', 'arg3'" -> ['arg1', 'arg2', 'arg3']
+    """
+    args = []
+    current = ""
+    in_quotes = False
+    quote_char = None
+    escape_next = False
+
+    for char in args_str:
+        if escape_next:
+            current += char
+            escape_next = False
+            continue
+
+        if char == '\\':
+            escape_next = True
+            current += char
+            continue
+
+        if char in ('"', "'") and not in_quotes:
+            in_quotes = True
+            quote_char = char
+            continue
+        elif char == quote_char and in_quotes:
+            in_quotes = False
+            quote_char = None
+            continue
+
+        if char == ',' and not in_quotes:
+            args.append(current.strip())
+            current = ""
+            continue
+
+        current += char
+
+    # Add last argument
+    if current.strip():
+        args.append(current.strip())
+
+    return args
+
+
 def parse_tool_args(tool_name: str, args_str: str) -> Optional[Dict[str, Any]]:
     """
     Parse tool arguments from various formats.
@@ -1799,26 +1844,40 @@ def parse_tool_args(tool_name: str, args_str: str) -> Optional[Dict[str, Any]]:
         except json.JSONDecodeError:
             pass
 
-    # Handle quoted string argument: 'value' or "value"
+    tool = TOOL_REGISTRY.get(tool_name)
+    if not tool:
+        return {}
+
+    sig = inspect.signature(tool)
+    params = list(sig.parameters.keys())
+
+    if not params:
+        return {}
+
+    # Check if this looks like multiple positional arguments (contains comma outside quotes)
+    # Pattern: 'arg1', 'arg2' or "arg1", "arg2" or mixed
+    if ',' in args_str and (args_str.count("'") >= 2 or args_str.count('"') >= 2):
+        positional = parse_positional_args(args_str)
+        if len(positional) > 1:
+            # Map positional args to parameters
+            result = {}
+            for i, value in enumerate(positional):
+                if i < len(params):
+                    # Clean up escape sequences
+                    value = value.replace('\\n', '\n').replace('\\t', '\t')
+                    result[params[i]] = value
+            return result
+
+    # Handle single quoted string argument: 'value' or "value"
     if (args_str.startswith("'") and args_str.endswith("'")) or \
        (args_str.startswith('"') and args_str.endswith('"')):
         value = args_str[1:-1]
-        # Map to first parameter of the tool
-        tool = TOOL_REGISTRY.get(tool_name)
-        if tool:
-            sig = inspect.signature(tool)
-            params = list(sig.parameters.keys())
-            if params:
-                return {params[0]: value}
+        value = value.replace('\\n', '\n').replace('\\t', '\t')
+        return {params[0]: value}
 
     # Handle unquoted string (simple value)
-    if args_str and not args_str.startswith('{'):
-        tool = TOOL_REGISTRY.get(tool_name)
-        if tool:
-            sig = inspect.signature(tool)
-            params = list(sig.parameters.keys())
-            if params:
-                return {params[0]: args_str}
+    if args_str:
+        return {params[0]: args_str}
 
     return {}
 
